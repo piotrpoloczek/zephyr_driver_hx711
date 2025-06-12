@@ -1,1 +1,6 @@
-rsource "drivers/Kconfig"
+config HX711
+    bool "HX711 Load Cell Amplifier"
+    default y
+    depends on DT_HAS_HX711_ENABLED
+    help
+      Enable driver for HX711 load cell amplifier.

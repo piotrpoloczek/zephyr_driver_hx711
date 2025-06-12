@@ -1,35 +1,39 @@
-#pragma once
+#ifndef ZEPHYR_DRIVERS_SENSOR_HX711_H_
+#define ZEPHYR_DRIVERS_SENSOR_HX711_H_
 
-#include <zephyr/device.h>
-#include <zephyr/drivers/gpio.h>
-#include <zephyr/kernel.h>
-#include <stdint.h>
-#include <stdbool.h>
+#include <zephyr/drivers/sensor.h>
 
-#define HX711_MAX_SENSORS 8
+/* Gain settings */
+#define HX711_GAIN_128 1
+#define HX711_GAIN_64  3
+#define HX711_GAIN_32  2
 
-struct hx711_sensor {
-    const struct device *dout_gpio;
-    gpio_pin_t dout_pin;
+/* Operating modes */
+#define HX711_MODE_RAW      0
+#define HX711_MODE_AVERAGE  1
+#define HX711_MODE_MEDIAN   2
+#define HX711_MODE_MEDAVG   3
+#define HX711_MODE_RUNAVG   4
+
+/* Attributes */
+#define HX711_ATTR_OFFSET   (SENSOR_ATTR_PRIV_START + 0)
+#define HX711_ATTR_SCALE    (SENSOR_ATTR_PRIV_START + 1)
+#define HX711_ATTR_GAIN     (SENSOR_ATTR_PRIV_START + 2)
+#define HX711_ATTR_MODE     (SENSOR_ATTR_PRIV_START + 3)
+#define HX711_ATTR_TARE     (SENSOR_ATTR_PRIV_START + 4)
+
+struct hx711_data {
     int32_t offset;
     float scale;
-    float last_valid;
+    uint8_t gain;
+    uint8_t mode;
+    int32_t last_value;
+    uint32_t last_time_read;
 };
 
-struct hx711_shared {
-    const struct device *sck_gpio;
-    gpio_pin_t sck_pin;
-    uint8_t num_sensors;
-    struct hx711_sensor sensors[HX711_MAX_SENSORS];
+struct hx711_config {
+    struct gpio_dt_spec data_gpio;
+    struct gpio_dt_spec clk_gpio;
 };
 
-int hx711_shared_init(struct hx711_shared *mgr, const char *sck_gpio_name, gpio_pin_t sck_pin);
-int hx711_add_sensor(struct hx711_shared *mgr, uint8_t index, const char *dout_gpio_name, gpio_pin_t dout_pin);
-bool hx711_is_ready(const struct hx711_shared *mgr, uint8_t index);
-float hx711_read_units(struct hx711_shared *mgr, uint8_t index, uint8_t times);
-void hx711_tare(struct hx711_shared *mgr, uint8_t index, uint8_t times);
-void hx711_calibrate(struct hx711_shared *mgr, uint8_t index, float weight, uint8_t times);
-int32_t hx711_raw_read(const struct device *dev);
-void hx711_tare(const struct device *dev, uint8_t samples);
-void hx711_set_scale(const struct device *dev, float scale);
-float hx711_get_units(const struct device *dev, uint8_t samples);
+#endif /* ZEPHYR_DRIVERS_SENSOR_HX711_H_ */
