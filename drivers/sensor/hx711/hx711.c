@@ -48,46 +48,14 @@ LOG_MODULE_REGISTER(HX711, CONFIG_SENSOR_LOG_LEVEL);
 			.rate_ctrl = DEVICE_DT_GET(DT_INST_GPIO_CTLR(inst, rate_gpios)), 
 			.rate_flags = DT_INST_GPIO_FLAGS(inst, rate_gpios),  
 		), ())                                                       
-	};                                                                 
+	};
+
 	PM_DEVICE_DT_INST_DEFINE(inst, hx711_pm_ctrl);                     
-	DEVICE_DT_INST_DEFINE(inst,                                        
+	DEVICE_DT_INST_DEFINE(inst,                        
 		hx711_init, PM_DEVICE_DT_INST_GET(inst),                      
 		&hx711_data_##inst, &hx711_config_##inst,                     
-		POST_KERNEL, CONFIG_SENSOR_INIT_PRIORITY, &hx711_api)
+		POST_KERNEL, CONFIG_SENSOR_INIT_PRIORITY, &hx711_api);
 
-
-
-// static struct hx711_data hx711_data = {
-// 	.reading = 0,
-// 	.offset = CONFIG_HX711_OFFSET,
-// 	.slope = {
-// 		.val1 = CONFIG_HX711_SLOPE_INTEGER,
-// 		.val2 = CONFIG_HX711_SLOPE_DECIMAL,
-// 	},
-// 	.gain = CONFIG_HX711_GAIN,
-// 	.rate = CONFIG_HX711_SAMPLING_RATE,
-// 	.power = HX711_POWER_ON,
-// #if defined(CONFIG_HX711_ENABLE_MEDIAN_FILTER) || defined(CONFIG_HX711_ENABLE_EMA_FILTER)
-// 	.reading_unfiltered = 0,
-// #endif
-// };
-
-// static const struct hx711_config hx711_config = {
-// 	.dout_pin = DT_INST_GPIO_PIN(0, dout_gpios),
-// 	.dout_ctrl = DEVICE_DT_GET(DT_GPIO_CTLR(DT_DRV_INST(0), dout_gpios)),
-// 	.dout_flags = DT_INST_GPIO_FLAGS(0, dout_gpios),
-
-// 	.sck_pin = DT_INST_GPIO_PIN(0, sck_gpios),
-// 	.sck_ctrl = DEVICE_DT_GET(DT_GPIO_CTLR(DT_DRV_INST(0), sck_gpios)),
-// 	.sck_flags = DT_INST_GPIO_FLAGS(0, sck_gpios),
-
-// #if DT_INST_NODE_HAS_PROP(0, rate_gpios)
-// 	.rate_pin = DT_INST_GPIO_PIN(0, rate_gpios),
-// 	.rate_ctrl = DEVICE_DT_GET(DT_GPIO_CTLR(DT_DRV_INST(0), rate_gpios)),
-// 	.rate_flags = DT_INST_GPIO_FLAGS(0, rate_gpios),
-// #endif
-
-// };
 
 static void hx711_gpio_callback(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
 {
@@ -242,7 +210,7 @@ static int hx711_attr_set_gain(const struct device *dev, const struct sensor_val
 	return hx711_sample_fetch(dev, HX711_SENSOR_CHAN_WEIGHT);
 }
 
-#if DT_INST_NODE_HAS_PROP(0, rate_gpios)
+
 /**
  * @brief Set HX711 rate.
  *
@@ -257,11 +225,16 @@ static int hx711_attr_set_gain(const struct device *dev, const struct sensor_val
  * @retval -ENOTSUP error if an invalid rate value is passed.
  *
  */
-static int hx711_attr_set_rate(struct hx711_data *data, const struct sensor_value *val)
+static int hx711_attr_set_rate(const struct device *dev, const struct sensor_value *val)
 {
 	struct hx711_data *data = dev->data;
-	const struct hx711_config *cfg = dev->config;
+    const struct hx711_config *cfg = dev->config;
 	int ret;
+
+	if (cfg->rate_ctrl == NULL) {
+		LOG_WRN("Rate control not defined in devicetree.");
+		return -ENOTSUP;
+	}
 
 	switch (val->val1) {
 	case HX711_RATE_10HZ:
@@ -277,7 +250,7 @@ static int hx711_attr_set_rate(struct hx711_data *data, const struct sensor_valu
 		return -ENOTSUP;
 	}
 }
-#endif
+
 
 /**
  * @brief Set HX711 offset.
@@ -348,39 +321,46 @@ static void hx711_attr_set_slope(struct hx711_data *data, const struct sensor_va
  *
  */
 static int hx711_attr_set(const struct device *dev, enum sensor_channel chan,
-			  enum sensor_attribute attr, const struct sensor_value *val)
+                          enum sensor_attribute attr, const struct sensor_value *val)
 {
-	int ret = 0;
-	int hx711_attr = (int)attr;
-	struct hx711_data *data = dev->data;
+    int ret = 0;
+    int hx711_attr = (int)attr;
+    struct hx711_data *data = dev->data;
+    const struct hx711_config *cfg = dev->config;
 
-	switch (hx711_attr) {
-#if DT_INST_NODE_HAS_PROP(0, rate_gpios)
-	case SENSOR_ATTR_SAMPLING_FREQUENCY:
-		ret = hx711_attr_set_rate(data, val);
-		if (ret == 0) {
-			LOG_DBG("Attribute RATE set to %d\n", data->rate);
-		}
-		return ret;
-#endif
-	case SENSOR_ATTR_OFFSET:
-		hx711_attr_set_offset(data, val);
-		LOG_DBG("Attribute OFFSET set to %d\n", data->offset);
-		return ret;
-	case HX711_SENSOR_ATTR_SLOPE:
-		hx711_attr_set_slope(data, val);
-		LOG_DBG("Attribute SLOPE set to %d.%d\n", data->slope.val1, data->slope.val2);
-		return ret;
-	case HX711_SENSOR_ATTR_GAIN:
-		ret = hx711_attr_set_gain(dev, val);
-		if (ret == 0) {
-			LOG_DBG("Attribute GAIN set to %d\n", data->gain);
-		}
-		return ret;
-	default:
-		return -ENOTSUP;
-	}
+    switch (hx711_attr) {
+    case SENSOR_ATTR_SAMPLING_FREQUENCY:
+        if (cfg->rate_ctrl == NULL) {
+            return -ENOTSUP;
+        }
+        ret = hx711_attr_set_rate(dev, val);
+        if (ret == 0) {
+            LOG_DBG("Attribute RATE set to %d\n", data->rate);
+        }
+        return ret;
+
+    case SENSOR_ATTR_OFFSET:
+        hx711_attr_set_offset(data, val);
+        LOG_DBG("Attribute OFFSET set to %d\n", data->offset);
+        return 0;
+
+    case HX711_SENSOR_ATTR_SLOPE:
+        hx711_attr_set_slope(data, val);
+        LOG_DBG("Attribute SLOPE set to %d.%d\n", data->slope.val1, data->slope.val2);
+        return 0;
+
+    case HX711_SENSOR_ATTR_GAIN:
+        ret = hx711_attr_set_gain(dev, val);
+        if (ret == 0) {
+            LOG_DBG("Attribute GAIN set to %d\n", data->gain);
+        }
+        return ret;
+
+    default:
+        return -ENOTSUP;
+    }
 }
+
 
 /**
  * @brief Get HX711 reading.
@@ -436,10 +416,10 @@ static int hx711_init(const struct device *dev)
 	LOG_DBG("DOUT GPIO port : %s\n", cfg->dout_ctrl->name);
 	LOG_DBG("DOUT Pin : %d\n", cfg->dout_pin);
 
-#if DT_INST_NODE_HAS_PROP(0, rate_gpios)
+if (cfg->rate_ctrl != NULL) {
 	LOG_DBG("RATE GPIO port : %s\n", cfg->rate_ctrl->name);
 	LOG_DBG("RATE Pin : %d\n", cfg->rate_pin);
-#endif
+}
 
 	LOG_DBG("Gain : %d\n", data->gain);
 	LOG_DBG("Offset : %d\n", data->offset);
@@ -455,7 +435,7 @@ static int hx711_init(const struct device *dev)
 		return ret;
 	}
 
-#if DT_INST_NODE_HAS_PROP(0, rate_gpios)
+if (cfg->rate_ctrl != NULL) {
 	/* Configure RATE as output, LOW */
 	data->rate_gpio = device_get_binding(cfg->rate_ctrl->name);
 	if (data->rate_gpio == NULL) {
@@ -473,7 +453,7 @@ static int hx711_init(const struct device *dev)
 	if (ret != 0) {
 		return ret;
 	}
-#endif
+}
 
 #if defined(CONFIG_HX711_ENABLE_MEDIAN_FILTER) || defined(CONFIG_HX711_ENABLE_EMA_FILTER)
 	k_mutex_init(&data->filter_lock);
@@ -671,10 +651,5 @@ static const struct sensor_driver_api hx711_api = {
 	.channel_get = hx711_channel_get,
 	.attr_set = hx711_attr_set,
 };
-
-// PM_DEVICE_DT_DEFINE(DT_DRV_INST(0), hx711_pm_ctrl);
-
-// DEVICE_DT_INST_DEFINE(0, hx711_init, PM_DEVICE_DT_GET(DT_DRV_INST(0)), &hx711_data, &hx711_config, POST_KERNEL,
-// 		      CONFIG_SENSOR_INIT_PRIORITY, &hx711_api);
 
 DT_INST_FOREACH_STATUS_OKAY(HX711_DEFINE)
