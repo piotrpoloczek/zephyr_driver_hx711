@@ -51,18 +51,6 @@ static const struct hx711_config hx711_config_2 = {
 	.sck_flags = DT_GPIO_FLAGS(DT_NODELABEL(hx711_2), sck_gpios),
 };
 
-DEVICE_DT_DEFINE(DT_NODELABEL(hx711_0), hx711_init, NULL,
-	&hx711_data_0, &hx711_config_0,
-	POST_KERNEL, CONFIG_SENSOR_INIT_PRIORITY, &hx711_api);
-
-DEVICE_DT_DEFINE(DT_NODELABEL(hx711_1), hx711_init, NULL,
-	&hx711_data_1, &hx711_config_1,
-	POST_KERNEL, CONFIG_SENSOR_INIT_PRIORITY, &hx711_api);
-
-DEVICE_DT_DEFINE(DT_NODELABEL(hx711_2), hx711_init, NULL,
-	&hx711_data_2, &hx711_config_2,
-	POST_KERNEL, CONFIG_SENSOR_INIT_PRIORITY, &hx711_api);
-
 
 LOG_MODULE_REGISTER(HX711, CONFIG_SENSOR_LOG_LEVEL);
 
@@ -698,3 +686,16 @@ static const struct sensor_driver_api hx711_api = {
 	.channel_get = hx711_channel_get,
 	.attr_set = hx711_attr_set,
 };
+
+
+DEVICE_DT_DEFINE(DT_NODELABEL(hx711_0), hx711_init, NULL,
+	&hx711_data_0, &hx711_config_0,
+	POST_KERNEL, CONFIG_SENSOR_INIT_PRIORITY, &hx711_api);
+
+DEVICE_DT_DEFINE(DT_NODELABEL(hx711_1), hx711_init, NULL,
+	&hx711_data_1, &hx711_config_1,
+	POST_KERNEL, CONFIG_SENSOR_INIT_PRIORITY, &hx711_api);
+
+DEVICE_DT_DEFINE(DT_NODELABEL(hx711_2), hx711_init, NULL,
+	&hx711_data_2, &hx711_config_2,
+	POST_KERNEL, CONFIG_SENSOR_INIT_PRIORITY, &hx711_api);
