@@ -19,56 +19,6 @@
 LOG_MODULE_REGISTER(HX711, CONFIG_SENSOR_LOG_LEVEL);
 
 
-#define HX711_DEFINE(inst)                                                     
-                                                                                
-static struct hx711_data hx711_data_##inst = {                                 \
-    .reading = 0,                                                              \
-    .offset  = CONFIG_HX711_OFFSET,                                            \
-    .slope   = {                                                               \
-        .val1 = CONFIG_HX711_SLOPE_INTEGER,                                    \
-        .val2 = CONFIG_HX711_SLOPE_DECIMAL,                                    \
-    },                                                                         \
-    .gain   = CONFIG_HX711_GAIN,                                               \
-    .rate   = CONFIG_HX711_SAMPLING_RATE,                                       \
-    .power  = HX711_POWER_ON,                                                   
-#if defined(CONFIG_HX711_ENABLE_MEDIAN_FILTER) || defined(CONFIG_HX711_ENABLE_EMA_FILTER) \
-    .reading_unfiltered = 0,                                                   
-#endif                                                                       
-};                                                                              
-                                                                                
-static const struct hx711_config hx711_config_##inst = {                       \
-    .dout_pin   = DT_INST_GPIO_PIN(inst, dout_gpios),                          \
-    .dout_ctrl  = DEVICE_DT_GET(DT_GPIO_CTLR(DT_DRV_INST(inst), dout_gpios)),  \
-    .dout_flags = DT_INST_GPIO_FLAGS(inst, dout_gpios),                        \
-                                                                                \
-    .sck_pin    = DT_INST_GPIO_PIN(inst, sck_gpios),                           \
-    .sck_ctrl   = DEVICE_DT_GET(DT_GPIO_CTLR(DT_DRV_INST(inst), sck_gpios)),   \
-    .sck_flags  = DT_INST_GPIO_FLAGS(inst, sck_gpios),                         \
-                                                                                \
-    COND_CODE_1(DT_INST_NODE_HAS_PROP(inst, rate_gpios),                       \
-        (                                                                       \
-            .rate_pin   = DT_INST_GPIO_PIN(inst, rate_gpios),                  \
-            .rate_ctrl  = DEVICE_DT_GET(DT_GPIO_CTLR(DT_DRV_INST(inst), rate_gpios)), \
-            .rate_flags = DT_INST_GPIO_FLAGS(inst, rate_gpios),                \
-        ),                                                                     \
-        ()                                                                    \
-    )                                                                          \
-};                                                                              
-       
-PM_DEVICE_DT_INST_DEFINE(inst, hx711_pm_ctrl);                                  
-DEVICE_DT_INST_DEFINE(inst,                                                    \
-    hx711_init,                                                                \
-    PM_DEVICE_DT_INST_GET(inst),                                               \
-    &hx711_data_##inst,                                                        \
-    &hx711_config_##inst,                                                      \
-    POST_KERNEL,                                                               \
-    CONFIG_SENSOR_INIT_PRIORITY,                                               \
-    &hx711_api);
-
-// DT_INST_FOREACH_STATUS_OKAY(HX711_DEFINE)
-
-
-
 static void hx711_gpio_callback(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
 {
 	struct hx711_data *data = CONTAINER_OF(cb, struct hx711_data, dout_gpio_cb);
@@ -658,10 +608,148 @@ int hx711_pm_ctrl(const struct device *dev, enum pm_device_action action)
 }
 #endif /* CONFIG_PM_DEVICE */
 
+
+/* sensor_driver_api */
 static const struct sensor_driver_api hx711_api = {
-	.sample_fetch = hx711_sample_fetch,
-	.channel_get = hx711_channel_get,
-	.attr_set = hx711_attr_set,
+    .sample_fetch = hx711_sample_fetch,
+    .channel_get  = hx711_channel_get,
+    .attr_set     = hx711_attr_set,
 };
 
-DT_INST_FOREACH_STATUS_OKAY(HX711_DEFINE)
+/* ———————————————————————————————————————— */
+/* INSTANCE 0 (device tree node hx711@0) */
+
+static struct hx711_data hx711_data_0 = {
+    .reading            = 0,
+    .offset             = CONFIG_HX711_OFFSET,
+    .slope              = {
+        .val1 = CONFIG_HX711_SLOPE_INTEGER,
+        .val2 = CONFIG_HX711_SLOPE_DECIMAL,
+    },
+    .gain               = CONFIG_HX711_GAIN,
+    .rate               = CONFIG_HX711_SAMPLING_RATE,
+    .power              = HX711_POWER_ON,
+#if defined(CONFIG_HX711_ENABLE_MEDIAN_FILTER) || defined(CONFIG_HX711_ENABLE_EMA_FILTER)
+    .reading_unfiltered = 0,
+#endif
+};
+
+static const struct hx711_config hx711_config_0 = {
+    .dout_pin   = DT_INST_GPIO_PIN(0, dout_gpios),
+    .dout_ctrl  = DEVICE_DT_GET(DT_GPIO_CTLR(DT_DRV_INST(0), dout_gpios)),
+    .dout_flags = DT_INST_GPIO_FLAGS(0, dout_gpios),
+
+    .sck_pin    = DT_INST_GPIO_PIN(0, sck_gpios),
+    .sck_ctrl   = DEVICE_DT_GET(DT_GPIO_CTLR(DT_DRV_INST(0), sck_gpios)),
+    .sck_flags  = DT_INST_GPIO_FLAGS(0, sck_gpios),
+
+    COND_CODE_1(DT_INST_NODE_HAS_PROP(0, rate_gpios),
+        (.rate_pin   = DT_INST_GPIO_PIN(0, rate_gpios),
+         .rate_ctrl  = DEVICE_DT_GET(DT_GPIO_CTLR(DT_DRV_INST(0), rate_gpios)),
+         .rate_flags = DT_INST_GPIO_FLAGS(0, rate_gpios)),
+        ()
+    )
+};
+
+PM_DEVICE_DT_INST_DEFINE(0, hx711_pm_ctrl);
+DEVICE_DT_INST_DEFINE(0,
+    hx711_init,
+    PM_DEVICE_DT_INST_GET(0),
+    &hx711_data_0,
+    &hx711_config_0,
+    POST_KERNEL,
+    CONFIG_SENSOR_INIT_PRIORITY,
+    &hx711_api);
+
+
+/* ———————————————————————————————————————— */
+/* INSTANCE 1 (device tree node hx711@1) */
+
+static struct hx711_data hx711_data_1 = {
+    .reading            = 0,
+    .offset             = CONFIG_HX711_OFFSET,
+    .slope              = {
+        .val1 = CONFIG_HX711_SLOPE_INTEGER,
+        .val2 = CONFIG_HX711_SLOPE_DECIMAL,
+    },
+    .gain               = CONFIG_HX711_GAIN,
+    .rate               = CONFIG_HX711_SAMPLING_RATE,
+    .power              = HX711_POWER_ON,
+#if defined(CONFIG_HX711_ENABLE_MEDIAN_FILTER) || defined(CONFIG_HX711_ENABLE_EMA_FILTER)
+    .reading_unfiltered = 0,
+#endif
+};
+
+static const struct hx711_config hx711_config_1 = {
+    .dout_pin   = DT_INST_GPIO_PIN(1, dout_gpios),
+    .dout_ctrl  = DEVICE_DT_GET(DT_GPIO_CTLR(DT_DRV_INST(1), dout_gpios)),
+    .dout_flags = DT_INST_GPIO_FLAGS(1, dout_gpios),
+
+    .sck_pin    = DT_INST_GPIO_PIN(1, sck_gpios),
+    .sck_ctrl   = DEVICE_DT_GET(DT_GPIO_CTLR(DT_DRV_INST(1), sck_gpios)),
+    .sck_flags  = DT_INST_GPIO_FLAGS(1, sck_gpios),
+
+    COND_CODE_1(DT_INST_NODE_HAS_PROP(1, rate_gpios),
+        (.rate_pin   = DT_INST_GPIO_PIN(1, rate_gpios),
+         .rate_ctrl  = DEVICE_DT_GET(DT_GPIO_CTLR(DT_DRV_INST(1), rate_gpios)),
+         .rate_flags = DT_INST_GPIO_FLAGS(1, rate_gpios)),
+        ()
+    )
+};
+
+PM_DEVICE_DT_INST_DEFINE(1, hx711_pm_ctrl);
+DEVICE_DT_INST_DEFINE(1,
+    hx711_init,
+    PM_DEVICE_DT_INST_GET(1),
+    &hx711_data_1,
+    &hx711_config_1,
+    POST_KERNEL,
+    CONFIG_SENSOR_INIT_PRIORITY,
+    &hx711_api);
+
+
+/* ———————————————————————————————————————— */
+/* INSTANCE 2 (device tree node hx711@2) */
+
+static struct hx711_data hx711_data_2 = {
+    .reading            = 0,
+    .offset             = CONFIG_HX711_OFFSET,
+    .slope              = {
+        .val1 = CONFIG_HX711_SLOPE_INTEGER,
+        .val2 = CONFIG_HX711_SLOPE_DECIMAL,
+    },
+    .gain               = CONFIG_HX711_GAIN,
+    .rate               = CONFIG_HX711_SAMPLING_RATE,
+    .power              = HX711_POWER_ON,
+#if defined(CONFIG_HX711_ENABLE_MEDIAN_FILTER) || defined(CONFIG_HX711_ENABLE_EMA_FILTER)
+    .reading_unfiltered = 0,
+#endif
+};
+
+static const struct hx711_config hx711_config_2 = {
+    .dout_pin   = DT_INST_GPIO_PIN(2, dout_gpios),
+    .dout_ctrl  = DEVICE_DT_GET(DT_GPIO_CTLR(DT_DRV_INST(2), dout_gpios)),
+    .dout_flags = DT_INST_GPIO_FLAGS(2, dout_gpios),
+
+    .sck_pin    = DT_INST_GPIO_PIN(2, sck_gpios),
+    .sck_ctrl   = DEVICE_DT_GET(DT_GPIO_CTLR(DT_DRV_INST(2), sck_gpios)),
+    .sck_flags  = DT_INST_GPIO_FLAGS(2, sck_gpios),
+
+    COND_CODE_1(DT_INST_NODE_HAS_PROP(2, rate_gpios),
+        (.rate_pin   = DT_INST_GPIO_PIN(2, rate_gpios),
+         .rate_ctrl  = DEVICE_DT_GET(DT_GPIO_CTLR(DT_DRV_INST(2), rate_gpios)),
+         .rate_flags = DT_INST_GPIO_FLAGS(2, rate_gpios)),
+        ()
+    )
+};
+
+PM_DEVICE_DT_INST_DEFINE(2, hx711_pm_ctrl);
+DEVICE_DT_INST_DEFINE(2,
+    hx711_init,
+    PM_DEVICE_DT_INST_GET(2),
+    &hx711_data_2,
+    &hx711_config_2,
+    POST_KERNEL,
+    CONFIG_SENSOR_INIT_PRIORITY,
+    &hx711_api);
+/* ———————————————————————————————————————— */
