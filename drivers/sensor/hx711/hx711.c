@@ -301,7 +301,7 @@ static int hx711_attr_set(const struct device *dev, enum sensor_channel chan,
 	struct hx711_data *data = dev->data;
 
 	switch (hx711_attr) {
-#if #if DT_ANY_INST_HAS_PROP_STATUS_OKAY(rate_gpios)
+#if DT_ANY_INST_HAS_PROP_STATUS_OKAY(rate_gpios)
 	case SENSOR_ATTR_SAMPLING_FREQUENCY:
 		ret = hx711_attr_set_rate(data, val);
 		if (ret == 0) {
