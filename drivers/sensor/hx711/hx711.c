@@ -669,7 +669,7 @@ static const struct sensor_driver_api hx711_api = {
 		.sck_pin = DT_INST_GPIO_PIN(inst, sck_gpios),
 		.sck_ctrl = DEVICE_DT_GET(DT_INST_GPIO_CTLR(inst, sck_gpios)),
 		.sck_flags = DT_INST_GPIO_FLAGS(inst, sck_gpios),
-		COND_CODE_1(DT_INST_NODE_HAS_PROP(inst, rate_gpios),
+		COND_CODE_1(DT_INST_NODE_HAS_PROP(rate_gpios),
 			(.rate_pin = DT_INST_GPIO_PIN(inst, rate_gpios),
 			 .rate_ctrl = DEVICE_DT_GET(DT_INST_GPIO_CTLR(inst, rate_gpios)),
 			 .rate_flags = DT_INST_GPIO_FLAGS(inst, rate_gpios),), ())
