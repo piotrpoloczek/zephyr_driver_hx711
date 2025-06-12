@@ -1,6 +1,5 @@
-cmake_minimum_required(VERSION 3.20.0)
-find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
-project(hx711)
+# SPDX-License-Identifier: Apache-2.0
 
-target_sources(app PRIVATE src/hx711.c)
-target_include_directories(app PRIVATE src)
+zephyr_library()
+zephyr_library_sources_ifdef(CONFIG_HX711 hx711.c)
+add_subdirectory_ifdef(CONFIG_HX711 filters)
