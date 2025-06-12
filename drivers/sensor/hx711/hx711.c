@@ -652,45 +652,55 @@ static const struct sensor_driver_api hx711_api = {
 };
 
 
-#define HX711_RATE_CONFIG(inst) \
-	COND_CODE_1(DT_INST_NODE_HAS_PROP(inst, rate_gpios), \
-	(.rate_pin = DT_INST_GPIO_PIN(inst, rate_gpios), \
-	 .rate_ctrl = DEVICE_DT_GET(DT_INST_GPIO_CTLR(inst, rate_gpios)), \
-	 .rate_flags = DT_INST_GPIO_FLAGS(inst, rate_gpios)), \
-	/* else: empty */ ())
 
 
-#define HX711_DEFINE(inst)                                                        \
-	static struct hx711_data hx711_data_##inst = {                            \
-		.offset = CONFIG_HX711_OFFSET,                                       \
-		.slope = {                                                           \
-			.val1 = CONFIG_HX711_SLOPE_INTEGER,                          \
-			.val2 = CONFIG_HX711_SLOPE_DECIMAL,                         \
-		},                                                                    \
-		.gain = CONFIG_HX711_GAIN,                                            \
-		.rate = CONFIG_HX711_SAMPLING_RATE,                                  \
-		.power = HX711_POWER_ON,                                             \
-	};                                                                         \
-                                                                               \
-	static const struct hx711_config hx711_config_##inst = {                  \
-		.dout_pin = DT_INST_GPIO_PIN(inst, dout_gpios),                      \
-		.dout_ctrl = DEVICE_DT_GET(DT_INST_GPIO_CTLR(inst, dout_gpios)),     \
-		.dout_flags = DT_INST_GPIO_FLAGS(inst, dout_gpios),                  \
-		.sck_pin = DT_INST_GPIO_PIN(inst, sck_gpios),                        \
-		.sck_ctrl = DEVICE_DT_GET(DT_INST_GPIO_CTLR(inst, sck_gpios)),       \
-		.sck_flags = DT_INST_GPIO_FLAGS(inst, sck_gpios),                    \
-		HX711_RATE_CONFIG(inst)                                              \
-	};                                                                         \
-                                                                               \
-	PM_DEVICE_DT_DEFINE(DT_DRV_INST(inst), hx711_pm_ctrl);                     \
-                                                                               \
-	DEVICE_DT_INST_DEFINE(inst,                                                \
-			      hx711_init,                                            \
-			      PM_DEVICE_DT_GET(DT_DRV_INST(inst)),                  \
-			      &hx711_data_##inst,                                   \
-			      &hx711_config_##inst,                                 \
-			      POST_KERNEL, CONFIG_SENSOR_INIT_PRIORITY,             \
-			      &hx711_api);
+/* --- Instance Data Macro --- */
+#define HX711_DEFINE_DATA(inst) \
+	static struct hx711_data hx711_data_##inst = { \
+		.offset = CONFIG_HX711_OFFSET, \
+		.slope = { \
+			.val1 = CONFIG_HX711_SLOPE_INTEGER, \
+			.val2 = CONFIG_HX711_SLOPE_DECIMAL, \
+		}, \
+		.gain = CONFIG_HX711_GAIN, \
+		.rate = CONFIG_HX711_SAMPLING_RATE, \
+		.power = HX711_POWER_ON, \
+	}
 
+/* --- Optional rate-gpios expansion --- */
+#if DT_ANY_INST_HAS_PROP_STATUS_OKAY(rate_gpios)
+#define HX711_CONFIG_RATE_FIELDS(inst) \
+		.rate_pin = DT_INST_GPIO_PIN(inst, rate_gpios), \
+		.rate_ctrl = DEVICE_DT_GET(DT_INST_GPIO_CTLR(inst, rate_gpios)), \
+		.rate_flags = DT_INST_GPIO_FLAGS(inst, rate_gpios),
+#else
+#define HX711_CONFIG_RATE_FIELDS(inst)
+#endif
 
+/* --- Instance Config Macro --- */
+#define HX711_DEFINE_CONFIG(inst) \
+	static const struct hx711_config hx711_config_##inst = { \
+		.dout_pin = DT_INST_GPIO_PIN(inst, dout_gpios), \
+		.dout_ctrl = DEVICE_DT_GET(DT_INST_GPIO_CTLR(inst, dout_gpios)), \
+		.dout_flags = DT_INST_GPIO_FLAGS(inst, dout_gpios), \
+		.sck_pin = DT_INST_GPIO_PIN(inst, sck_gpios), \
+		.sck_ctrl = DEVICE_DT_GET(DT_INST_GPIO_CTLR(inst, sck_gpios)), \
+		.sck_flags = DT_INST_GPIO_FLAGS(inst, sck_gpios), \
+		HX711_CONFIG_RATE_FIELDS(inst) \
+	}
+
+/* --- Device Definition Macro --- */
+#define HX711_DEFINE(inst) \
+	HX711_DEFINE_DATA(inst); \
+	HX711_DEFINE_CONFIG(inst); \
+	PM_DEVICE_DT_DEFINE(DT_DRV_INST(inst), hx711_pm_ctrl); \
+	DEVICE_DT_INST_DEFINE(inst, \
+		hx711_init, \
+		PM_DEVICE_DT_GET(DT_DRV_INST(inst)), \
+		&hx711_data_##inst, \
+		&hx711_config_##inst, \
+		POST_KERNEL, CONFIG_SENSOR_INIT_PRIORITY, \
+		&hx711_api)
+
+/* --- Apply to all matching instances --- */
 DT_INST_FOREACH_STATUS_OKAY(HX711_DEFINE)
