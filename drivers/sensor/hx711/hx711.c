@@ -135,7 +135,7 @@ static int hx711_init(const struct device *dev) {
 	data->sck_dev = cfg->sck_gpio.port;
 	data->sck_pin = cfg->sck_gpio.pin;
 	data->gain = CONFIG_HX711_GAIN;
-	data->scale = 1.0f;
+	data->scale = CONFIG_HX711_SCALE_INTEGER + CONFIG_HX711_SCALE_DECIMAL / 1000000.0f;
 	data->offset = 0;
 
 	gpio_pin_configure_dt(&cfg->dout_gpio, GPIO_INPUT);

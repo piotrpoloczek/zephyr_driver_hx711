@@ -24,11 +24,19 @@ config HX711_GAIN
 	    2 = Channel B, Gain 32
 	    3 = Channel A, Gain 64
 
-config HX711_SCALE
-	float "Initial scale multiplier"
-	default 1.0
-	help
-	  Initial scale factor used for converting raw data to units (e.g. grams).
+config HX711_SCALE_INTEGER
+    int "Scale multiplier integer part"
+    default 1
+    help
+      Integer part of the scale factor (e.g. for 1.23, set to 1)
+
+config HX711_SCALE_DECIMAL
+    int "Scale multiplier decimal part (in micro-units)"
+    default 0
+    help
+      Decimal part of the scale factor in micro-units.
+      For example, for 1.23 set this to 230000 (1.000000 + 0.230000)
+
 
 config HX711_SAMPLE_FETCH_TIMEOUT_MS
 	int "Maximum time (ms) to wait for data ready"
