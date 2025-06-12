@@ -13,6 +13,7 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/byteorder.h>
 #include <zephyr/pm/device.h>
+#include <zephyr/devicetree.h>
 
 #include "hx711.h"
 
