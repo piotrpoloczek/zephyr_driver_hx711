@@ -1,22 +1,39 @@
 # SPDX-License-Identifier: Apache-2.0
+
 menuconfig HX711
-    bool "HX711 Weight Scale Sensor"
-    depends on GPIO
-    help
-      Enable driver for HX711 weight scale sensor
+	bool "HX711 Weight Scale Sensor"
+	depends on GPIO
+	help
+	  Enable driver for HX711 weight scale sensor (ADC-based load cell amplifier).
 
 if HX711
 
 config HX711_OFFSET
-    int "Initial offset"
-    default 0
-    help
-      Offset to subtract from raw ADC value
+	int "Initial offset"
+	default 0
+	help
+	  Offset to subtract from raw ADC value during scale calculation.
 
 config HX711_GAIN
-    int "Gain setting (1=A128, 2=B32, 3=A64)"
-    default 1
-    help
-      HX711 gain: 1 = channel A gain 128x (default), 2 = channel B 32x, 3 = channel A 64x
+	int "Gain setting (1=A128, 2=B32, 3=A64)"
+	range 1 3
+	default 1
+	help
+	  HX711 gain configuration:
+	    1 = Channel A, Gain 128 (default)
+	    2 = Channel B, Gain 32
+	    3 = Channel A, Gain 64
+
+config HX711_SCALE
+	float "Initial scale multiplier"
+	default 1.0
+	help
+	  Initial scale factor used for converting raw data to units (e.g. grams).
+
+config HX711_SAMPLE_FETCH_TIMEOUT_MS
+	int "Maximum time (ms) to wait for data ready"
+	default 1000
+	help
+	  How long (in milliseconds) to wait for the HX711 to become ready before timing out.
 
 endif
