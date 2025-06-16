@@ -9,269 +9,226 @@
 #include <zephyr/device.h>
 #include <zephyr/drivers/gpio.h>
 #include <zephyr/drivers/sensor.h>
-#include <zephyr/irq.h>
 #include <zephyr/logging/log.h>
 #include <zephyr/sys/byteorder.h>
+#include <zephyr/kernel.h>
 #include <zephyr/pm/device.h>
-#include <zephyr/devicetree.h>
 
 #include "hx711.h"
 
-/* Include the devicetree node labels */
-#include <zephyr/devicetree.h>
-
-static struct hx711_data hx711_data_0;
-static struct hx711_data hx711_data_1;
-static struct hx711_data hx711_data_2;
-
-static const struct hx711_config hx711_config_0 = {
-	.dout_pin = DT_GPIO_PIN(DT_NODELABEL(hx711_0), dout_gpios),
-	.dout_ctrl = DEVICE_DT_GET(DT_GPIO_CTLR(DT_NODELABEL(hx711_0), dout_gpios)),
-	.dout_flags = DT_GPIO_FLAGS(DT_NODELABEL(hx711_0), dout_gpios),
-	.sck_pin = DT_GPIO_PIN(DT_NODELABEL(hx711_0), sck_gpios),
-	.sck_ctrl = DEVICE_DT_GET(DT_GPIO_CTLR(DT_NODELABEL(hx711_0), sck_gpios)),
-	.sck_flags = DT_GPIO_FLAGS(DT_NODELABEL(hx711_0), sck_gpios),
-};
-
-static const struct hx711_config hx711_config_1 = {
-	.dout_pin = DT_GPIO_PIN(DT_NODELABEL(hx711_1), dout_gpios),
-	.dout_ctrl = DEVICE_DT_GET(DT_GPIO_CTLR(DT_NODELABEL(hx711_1), dout_gpios)),
-	.dout_flags = DT_GPIO_FLAGS(DT_NODELABEL(hx711_1), dout_gpios),
-	.sck_pin = DT_GPIO_PIN(DT_NODELABEL(hx711_1), sck_gpios),
-	.sck_ctrl = DEVICE_DT_GET(DT_GPIO_CTLR(DT_NODELABEL(hx711_1), sck_gpios)),
-	.sck_flags = DT_GPIO_FLAGS(DT_NODELABEL(hx711_1), sck_gpios),
-};
-
-static const struct hx711_config hx711_config_2 = {
-	.dout_pin = DT_GPIO_PIN(DT_NODELABEL(hx711_2), dout_gpios),
-	.dout_ctrl = DEVICE_DT_GET(DT_GPIO_CTLR(DT_NODELABEL(hx711_2), dout_gpios)),
-	.dout_flags = DT_GPIO_FLAGS(DT_NODELABEL(hx711_2), dout_gpios),
-	.sck_pin = DT_GPIO_PIN(DT_NODELABEL(hx711_2), sck_gpios),
-	.sck_ctrl = DEVICE_DT_GET(DT_GPIO_CTLR(DT_NODELABEL(hx711_2), sck_gpios)),
-	.sck_flags = DT_GPIO_FLAGS(DT_NODELABEL(hx711_2), sck_gpios),
-};
-
-
 LOG_MODULE_REGISTER(HX711, CONFIG_SENSOR_LOG_LEVEL);
 
-static struct k_mutex hx711_sck_mutex;
+/* Shared clock line mutex (for all instances) */
+static struct k_mutex clock_mutex;
 
-
-static void hx711_gpio_callback(const struct device *dev, struct gpio_callback *cb, uint32_t pins)
+/* One-time init for mutex */
+static void init_shared_clock_mutex(void)
 {
-	struct hx711_data *data = CONTAINER_OF(cb, struct hx711_data, dout_gpio_cb);
-	const struct hx711_config *cfg = data->dev->config;
-
-	gpio_pin_interrupt_configure(data->dout_gpio, cfg->dout_pin, GPIO_INT_DISABLE);
-
-	/* Signal thread that data is now ready */
-	k_sem_give(&data->dout_sem);
+	static bool initialized;
+	if (!initialized) {
+		k_mutex_init(&clock_mutex);
+		initialized = true;
+	}
 }
 
-
-/**
- * @brief Send a pulse on the SCK pin.
- *
- * @param data Pointer to the hx711 driver data structure
- *
- * @retval The value of the DOUT pin (HIGH or LOW)
- *
- */
-static int hx711_cycle(struct hx711_data *data)
+/* Instance-specific init function */
+static int hx711_init(const struct device *dev)
 {
-	const struct hx711_config *cfg = data->dev->config;
-
-	k_mutex_lock(&hx711_sck_mutex, K_FOREVER);
-
-#ifdef CONFIG_HX711_DISABLE_INTERRUPTS_WHILE_POLLING
-	uint32_t key = irq_lock();
-#endif
-	gpio_pin_set(data->sck_gpio, cfg->sck_pin, true);
-	k_busy_wait(1);
-	gpio_pin_set(data->sck_gpio, cfg->sck_pin, false);
-
-#ifdef CONFIG_HX711_DISABLE_INTERRUPTS_WHILE_POLLING
-	irq_unlock(key);
-#endif
-	k_busy_wait(1);
-	int dout_val = gpio_pin_get(data->dout_gpio, cfg->dout_pin);
-
-	k_mutex_unlock(&hx711_sck_mutex);
-
-	return dout_val;
-}
-
-/**
- * @brief Read HX711 data. Also sets GAIN for the next cycle.
- *
- * @param dev Pointer to the hx711 device structure
- * @param chan Channel to fetch data for.
- *             Only HX711_SENSOR_CHAN_WEIGHT is available.
- *
- * @retval 0 on success,
- * @retval -EACCES error if module is not powered up.
- * @retval -EIO error if CONFIG_HX711_SAMPLE_FETCH_TIMEOUT_MS elapsed with no data available.
- *
- */
-static int hx711_sample_fetch(const struct device *dev, enum sensor_channel chan)
-{
-	int ret = 0;
-	int interrupt_cfg_ret;
-	uint32_t count = 0;
-	int i;
-
-	struct hx711_data *data = dev->data;
 	const struct hx711_config *cfg = dev->config;
+	struct hx711_data *data = dev->data;
 
-	if (data->power != HX711_POWER_ON) {
-		return -EACCES;
+	init_shared_clock_mutex();
+
+	if (!gpio_is_ready_dt(&cfg->dout_gpio)) {
+		LOG_ERR("DOUT GPIO not ready");
+		return -ENODEV;
 	}
 
-	if (k_sem_take(&data->dout_sem, K_MSEC(CONFIG_HX711_SAMPLE_FETCH_TIMEOUT_MS))) {
-		LOG_ERR("Weight data not ready within %d ms", CONFIG_HX711_SAMPLE_FETCH_TIMEOUT_MS);
-		ret = -EIO;
-		goto exit;
+	if (!gpio_is_ready_dt(&cfg->sck_gpio)) {
+		LOG_ERR("SCK GPIO not ready");
+		return -ENODEV;
 	}
 
-	/* Clock data out. */
-	for (i = 0; i < 24; i++) {
-		count = count << 1;
-		if (hx711_cycle(data)) {
-			count++;
+	if (gpio_pin_configure_dt(&cfg->dout_gpio, GPIO_INPUT) < 0) {
+		LOG_ERR("Failed to configure DOUT pin");
+		return -EIO;
+	}
+
+	/* Only configure clock as output if this is the first device */
+	if (dev == DEVICE_DT_GET(DT_INST(0, avia_hx711))) {
+		if (gpio_pin_configure_dt(&cfg->sck_gpio, GPIO_OUTPUT_LOW) < 0) {
+			LOG_ERR("Failed to configure SCK pin");
+			return -EIO;
 		}
 	}
 
-	/* set GAIN for next read */
-	for (i = 0; i < data->gain; i++) {
-		hx711_cycle(data);
+#if DT_INST_NODE_HAS_PROP(0, rate_gpios)
+	if (cfg->rate_gpio.port && gpio_is_ready_dt(&cfg->rate_gpio)) {
+		if (gpio_pin_configure_dt(&cfg->rate_gpio, GPIO_OUTPUT_INACTIVE) < 0) {
+			LOG_WRN("Failed to configure RATE pin");
+		}
 	}
+#endif
 
-	count ^= 0x800000;
-	data->reading = count;
+	data->offset = 0;
+	data->scale = 1.0f;
+	data->gain = cfg->gain;
+	data->mode = cfg->mode;
+	data->power = HX711_POWER_ON;
+	data->last_value = 0;
+	data->last_time_read = 0;
 
 #if defined(CONFIG_HX711_ENABLE_MEDIAN_FILTER) || defined(CONFIG_HX711_ENABLE_EMA_FILTER)
-	k_mutex_lock(&data->filter_lock, K_FOREVER);
-	data->reading_unfiltered = count;
+	data->reading_unfiltered = 0;
+#endif
+
+	LOG_INF("HX711 initialized: %s", dev->name);
+	return 0;
+}
+
+
+static void hx711_gpio_callback(const struct device *port,
+                                struct gpio_callback *cb,
+                                uint32_t pins)
+{
+    struct hx711_data *data = CONTAINER_OF(cb, struct hx711_data, dout_gpio_cb);
+    const struct hx711_config *cfg = data->dev->config;
+
+    gpio_pin_interrupt_configure_dt(&cfg->dout_gpio, GPIO_INT_DISABLE);
+    k_sem_give(&data->dout_sem);
+}
+
+/* Generate one clock cycle and return DOUT state */
+static int hx711_cycle(const struct hx711_data *data)
+{
+    const struct hx711_config *cfg = data->dev->config;
+
+#ifdef CONFIG_HX711_DISABLE_INTERRUPTS_WHILE_POLLING
+    unsigned int key = irq_lock();
+#endif
+
+    gpio_pin_set_dt(&cfg->sck_gpio, 1);
+    k_busy_wait(1);
+    gpio_pin_set_dt(&cfg->sck_gpio, 0);
+
+#ifdef CONFIG_HX711_DISABLE_INTERRUPTS_WHILE_POLLING
+    irq_unlock(key);
+#endif
+
+    k_busy_wait(1);
+    return gpio_pin_get_dt(&cfg->dout_gpio);
+}
+
+/* Read and decode 24-bit HX711 value */
+static int hx711_sample_fetch(const struct device *dev, enum sensor_channel chan)
+{
+    struct hx711_data *data = dev->data;
+    const struct hx711_config *cfg = dev->config;
+
+    if (data->power != HX711_POWER_ON) {
+        return -EACCES;
+    }
+
+    if (chan != SENSOR_CHAN_ALL) {
+        return -ENOTSUP;
+    }
+
+    if (k_sem_take(&data->dout_sem, K_MSEC(CONFIG_HX711_SAMPLE_FETCH_TIMEOUT_MS)) != 0) {
+        LOG_ERR("Weight data not ready within %d ms", CONFIG_HX711_SAMPLE_FETCH_TIMEOUT_MS);
+        return -EIO;
+    }
+
+    k_mutex_lock(&clock_mutex, K_FOREVER);
+
+    /* Read 24 bits */
+    int32_t count = 0;
+    for (int i = 0; i < 24; i++) {
+        count <<= 1;
+        if (hx711_cycle(data)) {
+            count++;
+        }
+    }
+
+    /* Set gain for next read */
+    for (int i = 0; i < data->gain; i++) {
+        hx711_cycle(data);
+    }
+
+    k_mutex_unlock(&clock_mutex);
+
+    /* Sign conversion */
+    count ^= 0x800000;
+    data->reading = count;
+
+#if defined(CONFIG_HX711_ENABLE_MEDIAN_FILTER) || defined(CONFIG_HX711_ENABLE_EMA_FILTER)
+    k_mutex_lock(&data->filter_lock, K_FOREVER);
+    data->reading_unfiltered = count;
 #endif
 
 #ifdef CONFIG_HX711_ENABLE_MEDIAN_FILTER
-	// Apply the median filter to the reading
     data->reading = median_filter_update(&data->median_filter, data->reading);
 #endif
 
 #ifdef CONFIG_HX711_ENABLE_EMA_FILTER
-	// Apply the EMA filter to the reading
     data->reading = ema_filter_update(&data->ema_filter, data->reading);
 #endif
 
 #if defined(CONFIG_HX711_ENABLE_MEDIAN_FILTER) || defined(CONFIG_HX711_ENABLE_EMA_FILTER)
-	k_mutex_unlock(&data->filter_lock);
+    k_mutex_unlock(&data->filter_lock);
 #endif
 
-exit:
-	// Disable DOUT interrupt first to ensure clean reconfiguration
-	gpio_pin_interrupt_configure(data->dout_gpio, cfg->dout_pin, GPIO_INT_DISABLE);
+    /* Re-enable interrupt */
+    int ret = gpio_pin_interrupt_configure_dt(&cfg->dout_gpio, GPIO_INT_EDGE_TO_INACTIVE);
+    if (ret != 0) {
+        LOG_ERR("Failed to set DOUT GPIO interrupt");
+    }
 
-	// Re-enable DOUT interrupt to catch the next falling edge
-	interrupt_cfg_ret = gpio_pin_interrupt_configure(data->dout_gpio, cfg->dout_pin, GPIO_INT_EDGE_TO_INACTIVE);
-	if (interrupt_cfg_ret != 0) {
-		LOG_ERR("Failed to set DOUT GPIO interrupt: %d", interrupt_cfg_ret);
-		ret = interrupt_cfg_ret;
-	}
-
-	return ret;
+    return ret;
 }
 
 
-
-/**
- * @brief Set HX711 gain.
- *
- * @param dev Pointer to the hx711 device structure
- * @param val sensor_value struct. Only val1 is used.
- *            valid values are :
- *                HX711_GAIN_128X (default),
- *                HX711_GAIN_32X,
- *                HX711_GAIN_64X,
- *
- * @retval 0 on success,
- * @retval -ENOTSUP error if an invalid GAIN is provided or
- *         -EACCES if 600000 usec's are elapsed with no data available.
- *
- */
+/* Set gain via sensor attribute */
 static int hx711_attr_set_gain(const struct device *dev, const struct sensor_value *val)
 {
 	struct hx711_data *data = dev->data;
 
 	switch (val->val1) {
-	case HX711_GAIN_128X:
-		data->gain = HX711_GAIN_128X;
-		break;
-	case HX711_GAIN_32X:
-		data->gain = HX711_GAIN_32X;
-		break;
-	case HX711_GAIN_64X:
-		data->gain = HX711_GAIN_64X;
+	case HX711_GAIN_128:
+	case HX711_GAIN_64:
+	case HX711_GAIN_32:
+		data->gain = val->val1;
 		break;
 	default:
 		return -ENOTSUP;
 	}
-	return hx711_sample_fetch(dev, HX711_SENSOR_CHAN_WEIGHT);
+
+	/* Apply immediately by fetching a new sample */
+	return hx711_sample_fetch(dev, SENSOR_CHAN_ALL);
 }
 
-
-#if DT_INST_NODE_HAS_PROP(inst, rate_gpios)
-/**
- * @brief Set HX711 rate.
- *
- * @param data Pointer to the hx711 driver data structure
- * @param val sensor_value struct. Only val1 is used.
- *            valid values are :
- *               HX711_RATE_10HZ (default),
- *               HX711_RATE_80HZ
- *
- * @retval 0 on success,
- * @retval -EINVAL error if it fails to get RATE device.
- * @retval -ENOTSUP error if an invalid rate value is passed.
- *
- */
-static int hx711_attr_set_rate(struct hx711_data *data, const struct sensor_value *val)
+#if DT_INST_NODE_HAS_PROP(0, rate_gpios)
+/* Set sampling rate (10 Hz or 80 Hz) if rate pin is defined */
+static int hx711_attr_set_rate(const struct device *dev, const struct sensor_value *val)
 {
-	const struct hx711_config *cfg = data->dev->config;
-	int ret;
+	struct hx711_data *data = dev->data;
+	const struct hx711_config *cfg = dev->config;
 
 	switch (val->val1) {
 	case HX711_RATE_10HZ:
 	case HX711_RATE_80HZ:
-		if (data->rate_gpio == NULL) {
-			LOG_ERR("Failed to get pointer to RATE device");
+		if (!cfg->rate_gpio.port) {
+			LOG_ERR("RATE GPIO not configured");
 			return -EINVAL;
 		}
 		data->rate = val->val1;
-		ret = gpio_pin_set(data->rate_gpio, cfg->rate_pin, data->rate);
-		if (ret != 0) {
-			LOG_ERR("Failed to set RATE pin %d to %d", cfg->rate_pin, data->rate);
-		}
-		return ret;
+		return gpio_pin_set_dt(&cfg->rate_gpio, data->rate == HX711_RATE_80HZ);
 	default:
 		return -ENOTSUP;
 	}
 }
 #endif
 
-
-/**
- * @brief Set HX711 offset.
- *
- * @param data Pointer to the hx711 driver data structure
- * @param offset sensor_value struct. Offset used to calculate the real weight.
- *        Formula is :
- *          weight = slope * (reading - offset)
- *          Only val1 is used.
- *
- * @return void
- *
- */
+/* Set offset for weight conversion (and reset filters if active) */
 static void hx711_attr_set_offset(struct hx711_data *data, const struct sensor_value *offset)
 {
 #if defined(CONFIG_HX711_ENABLE_MEDIAN_FILTER) || defined(CONFIG_HX711_ENABLE_EMA_FILTER)
@@ -279,7 +236,7 @@ static void hx711_attr_set_offset(struct hx711_data *data, const struct sensor_v
 #endif
 
 #ifdef CONFIG_HX711_ENABLE_MEDIAN_FILTER
-    median_filter_init(&data->median_filter, offset->val1);
+	median_filter_init(&data->median_filter, offset->val1);
 #endif
 
 #ifdef CONFIG_HX711_ENABLE_EMA_FILTER
@@ -293,106 +250,69 @@ static void hx711_attr_set_offset(struct hx711_data *data, const struct sensor_v
 	data->offset = offset->val1;
 }
 
-/**
- * @brief Set HX711 slope.
- *
- * @param data Pointer to the hx711 driver data structure
- * @param slope sensor_value struct. Slope used to calculate the real weight.
- *        Formula is :
- *          weight = slope * (reading - offset)
- *
- * @return void
- *
- */
+/* Set slope (scale factor for conversion) */
 static void hx711_attr_set_slope(struct hx711_data *data, const struct sensor_value *slope)
 {
 	data->slope.val1 = slope->val1;
 	data->slope.val2 = slope->val2;
-	LOG_DBG("Slope updated to: %d.%06d", slope->val1, slope->val2);
 }
 
-/**
- * @brief Set HX711 attributes.
- *
- * @param dev Pointer to the hx711 device structure
- * @param chan Channel to set.
- *             Supported channels :
- *               HX711_SENSOR_CHAN_WEIGHT
- * @param attr Attribute to change.
- *             Supported attributes :
- *               SENSOR_ATTR_SAMPLING_FREQUENCY
- *               SENSOR_ATTR_OFFSET
- *               HX711_SENSOR_ATTR_SLOPE
- *               HX711_SENSOR_ATTR_GAIN
- * @param val   Value to set.
- * @retval 0 on success
- * @retval -ENOTSUP if an invalid attribute is given
- *
- */
-static int hx711_attr_set(const struct device *dev, enum sensor_channel chan,
-			  enum sensor_attribute attr, const struct sensor_value *val)
+/* Generic attribute setter */
+static int hx711_attr_set(const struct device *dev,
+			  enum sensor_channel chan,
+			  enum sensor_attribute attr,
+			  const struct sensor_value *val)
 {
-	int ret = 0;
-	int hx711_attr = (int)attr;
 	struct hx711_data *data = dev->data;
+	int ret = 0;
 
-	switch (hx711_attr) {
-#if DT_ANY_INST_HAS_PROP_STATUS_OKAY(rate_gpios)
+	switch ((int)attr) {
+
+#if DT_INST_NODE_HAS_PROP(0, rate_gpios)
 	case SENSOR_ATTR_SAMPLING_FREQUENCY:
-		ret = hx711_attr_set_rate(data, val);
+		ret = hx711_attr_set_rate(dev, val);
 		if (ret == 0) {
-			LOG_DBG("Attribute RATE set to %d\n", data->rate);
+			LOG_DBG("RATE set to %d Hz", data->rate);
 		}
-		return ret;
+		break;
 #endif
 
 	case SENSOR_ATTR_OFFSET:
 		hx711_attr_set_offset(data, val);
-		LOG_DBG("Attribute OFFSET set to %d", data->offset);
-		return 0;
+		LOG_DBG("OFFSET set to %d", data->offset);
+		break;
 
-	case HX711_SENSOR_ATTR_SLOPE:
+	case HX711_ATTR_SLOPE:
 		hx711_attr_set_slope(data, val);
-		LOG_DBG("Attribute SLOPE set to %d.%d", data->slope.val1, data->slope.val2);
-		return 0;
+		LOG_DBG("SLOPE set to %d.%d", data->slope.val1, data->slope.val2);
+		break;
 
-	case HX711_SENSOR_ATTR_GAIN:
+	case HX711_ATTR_GAIN:
 		ret = hx711_attr_set_gain(dev, val);
 		if (ret == 0) {
-			LOG_DBG("Attribute GAIN set to %d", data->gain);
+			LOG_DBG("GAIN set to %d", data->gain);
 		}
-		return ret;
+		break;
 
 	default:
 		return -ENOTSUP;
 	}
+
+	return ret;
 }
 
-/**
- * @brief Get HX711 reading.
- *
- * @param dev Pointer to the hx711 device structure
- * @param chan Channel to set.
- *             Supported channels :
- *               HX711_SENSOR_CHAN_WEIGHT
- *
- * @param val  Value to write weight value to.
- *        Formula is :
- *          weight = slope * (reading - offset)
- *
- * @retval 0 on success
- * @retval  -ENOTSUP if an invalid channel is given
- *
- */
-static int hx711_channel_get(const struct device *dev, enum sensor_channel chan,
+/* Get converted weight channel reading */
+static int hx711_channel_get(const struct device *dev,
+			     enum sensor_channel chan,
 			     struct sensor_value *val)
 {
-	enum hx711_channel hx711_chan = (enum hx711_channel)chan;
 	struct hx711_data *data = dev->data;
 
-	switch (hx711_chan) {
+	switch ((int)chan) {
 	case HX711_SENSOR_CHAN_WEIGHT: {
-		sensor_value_from_double(val, sensor_value_to_double(&data->slope)  * (data->reading - data->offset));
+		double slope = sensor_value_to_double(&data->slope);
+		double result = slope * (data->reading - data->offset);
+		sensor_value_from_double(val, result);
 		return 0;
 	}
 	default:
@@ -401,160 +321,111 @@ static int hx711_channel_get(const struct device *dev, enum sensor_channel chan,
 }
 
 
-//todo:
-
-
-
-/**
- * @brief Initialise HX711.
- *
- * @param dev Pointer to the hx711 device structure
- *
- * @retval 0 on success
- * @retval -EINVAL if an invalid argument is given
- *
- */
 static int hx711_init(const struct device *dev)
 {
-	LOG_DBG("Initialising HX711\n");
-
-	int ret = 0;
 	struct hx711_data *data = dev->data;
 	const struct hx711_config *cfg = dev->config;
+	int ret;
 
-	LOG_DBG("Initializing HX711 instance");
-	LOG_DBG("SCK: port=%s pin=%d", cfg->sck_ctrl->name, cfg->sck_pin);
-	LOG_DBG("DOUT: port=%s pin=%d", cfg->dout_ctrl->name, cfg->dout_pin);
+	LOG_DBG("Initializing HX711: %s", dev->name);
 
-#if DT_ANY_INST_HAS_PROP_STATUS_OKAY(rate_gpios)
-	LOG_DBG("RATE: port=%s pin=%d", cfg->rate_ctrl->name, cfg->rate_pin);
-#endif
+	/* Initialize shared clock mutex (only once globally) */
+	init_shared_clock_mutex();
 
-	LOG_DBG("Initial gain=%d offset=%d slope=%d.%d",
-	        data->gain, data->offset, data->slope.val1, data->slope.val2);
-	
-	// Store device reference
-	data->dev = dev;
-
-	// Configure SCK as output, initially LOW
-	data->sck_gpio = cfg->sck_ctrl;
-	ret = gpio_pin_configure(data->sck_gpio, cfg->sck_pin,
-	                         GPIO_OUTPUT_INACTIVE | cfg->sck_flags);
+	/* Configure SCK pin */
+	ret = gpio_pin_configure_dt(&cfg->sck_gpio, GPIO_OUTPUT_INACTIVE);
 	if (ret != 0) {
 		LOG_ERR("Failed to configure SCK pin");
 		return ret;
 	}
 
-#if DT_ANY_INST_HAS_PROP_STATUS_OKAY(rate_gpios)
-	// Optional RATE pin configuration
-	data->rate_gpio = device_get_binding(cfg->rate_ctrl->name);
-	if (data->rate_gpio == NULL) {
-		LOG_ERR("Failed to bind RATE GPIO %s", cfg->rate_ctrl->name);
-		return -EINVAL;
-	}
-
-	ret = gpio_pin_configure(data->rate_gpio, cfg->rate_pin,
-	                         GPIO_OUTPUT_INACTIVE | cfg->rate_flags);
-
-	if (ret != 0) {
-		LOG_ERR("Failed to configure RATE pin");
-		return ret;
-	}
-
-	ret = gpio_pin_set(data->rate_gpio, cfg->rate_pin, CONFIG_HX711_SAMPLING_RATE);
-	if (ret != 0) {
-		LOG_ERR("Failed to set RATE pin");
-		return ret;
+	/* Configure RATE pin if available */
+#if DT_INST_NODE_HAS_PROP(0, rate_gpios)
+	if (cfg->rate_gpio.port) {
+		ret = gpio_pin_configure_dt(&cfg->rate_gpio, GPIO_OUTPUT_INACTIVE);
+		if (ret != 0) {
+			LOG_ERR("Failed to configure RATE pin");
+			return ret;
+		}
+		ret = gpio_pin_set_dt(&cfg->rate_gpio, cfg->rate == HX711_RATE_80HZ);
+		if (ret != 0) {
+			LOG_ERR("Failed to set RATE pin");
+			return ret;
+		}
 	}
 #endif
 
-#if defined(CONFIG_HX711_ENABLE_MEDIAN_FILTER) || defined(CONFIG_HX711_ENABLE_EMA_FILTER)
-	k_mutex_init(&data->filter_lock);
-#endif
-
-#ifdef CONFIG_HX711_ENABLE_MEDIAN_FILTER
-    median_filter_init(&data->median_filter, data->offset);
-#endif
-
-#ifdef CONFIG_HX711_ENABLE_EMA_FILTER
-    ema_filter_init(&data->ema_filter, CONFIG_HX711_EMA_FILTER_ALPHA_FACTOR, (double)data->offset);
-#endif
-
-	k_sem_init(&data->dout_sem, 1, 1);
-
-	/* Configure DOUT as input */
-	data->dout_gpio = cfg->dout_ctrl;
-	
-	LOG_DBG("DOUT pin controller is %p, name is %s\n", data->dout_gpio, data->dout_gpio->name);
-	
-	ret = gpio_pin_configure(data->dout_gpio, cfg->dout_pin, GPIO_INPUT | cfg->dout_flags);
-
+	/* Configure DOUT pin */
+	ret = gpio_pin_configure_dt(&cfg->dout_gpio, GPIO_INPUT);
 	if (ret != 0) {
 		LOG_ERR("Failed to configure DOUT pin");
 		return ret;
 	}
 
-	LOG_DBG("Set DOUT pin : %d\n", cfg->dout_pin);
+	/* Initialize filter (optional) */
+#if defined(CONFIG_HX711_ENABLE_MEDIAN_FILTER) || defined(CONFIG_HX711_ENABLE_EMA_FILTER)
+	k_mutex_init(&data->filter_lock);
+#endif
 
-	// Set up interrupt callback on DOUT
-	gpio_init_callback(&data->dout_gpio_cb, hx711_gpio_callback, BIT(cfg->dout_pin));
-	if (gpio_add_callback(data->dout_gpio, &data->dout_gpio_cb) < 0) {
-		LOG_ERR("Failed to add GPIO callback");
-		return -EIO;
-	}
+#ifdef CONFIG_HX711_ENABLE_MEDIAN_FILTER
+	median_filter_init(&data->median_filter, data->offset);
+#endif
 
-	ret = gpio_pin_interrupt_configure(data->dout_gpio, cfg->dout_pin,
-	                                   GPIO_INT_EDGE_TO_INACTIVE);
+#ifdef CONFIG_HX711_ENABLE_EMA_FILTER
+	ema_filter_init(&data->ema_filter,
+	                CONFIG_HX711_EMA_FILTER_ALPHA_FACTOR,
+	                (double)data->offset);
+#endif
+
+	/* Initialize semaphore and device pointer */
+	k_sem_init(&data->dout_sem, 1, 1);
+	data->dev = dev;
+
+	/* Setup GPIO callback */
+	gpio_init_callback(&data->dout_gpio_cb, hx711_gpio_callback,
+	                   BIT(cfg->dout_gpio.pin));
+	ret = gpio_add_callback(cfg->dout_gpio.port, &data->dout_gpio_cb);
 	if (ret != 0) {
-		LOG_ERR("Failed to configure DOUT interrupt");
+		LOG_ERR("Failed to add DOUT GPIO callback");
 		return ret;
 	}
 
-	// Initialize the shared SCK mutex if needed
-	static bool mutex_initialized = false;
-	static struct k_mutex init_lock;
-	k_mutex_init(&init_lock);
-	k_mutex_lock(&init_lock, K_FOREVER);
-	if (!mutex_initialized) {
-		k_mutex_init(&hx711_sck_mutex);
-		mutex_initialized = true;
+	ret = gpio_pin_interrupt_configure_dt(&cfg->dout_gpio, GPIO_INT_EDGE_TO_INACTIVE);
+	if (ret != 0) {
+		LOG_ERR("Failed to enable DOUT interrupt");
+		return ret;
 	}
-	k_mutex_unlock(&init_lock);
 
 	return 0;
 }
 
 
-
-
-
-// todo:
-
 /**
- * @brief Zero the HX711.
+ * @brief Zero the HX711 by calculating average offset.
  *
- * @param dev Pointer to the hx711 device structure
- * @param readings Number of readings to get average offset.
- *        5~10 readings should be enough, although more are allowed.
- * @retval The offset value
- *
+ * @param dev       Pointer to the HX711 device instance
+ * @param readings  Number of readings to average for tare (recommended: 5–10)
+ * @retval          The computed offset
  */
 int avia_hx711_tare(const struct device *dev, uint8_t readings)
 {
-	int32_t avg = 0;
 	struct hx711_data *data = dev->data;
+	int32_t avg = 0;
 
 	if (readings == 0) {
 		readings = 1;
 	}
 
 	for (int i = 0; i < readings; i++) {
-		hx711_sample_fetch(dev, HX711_SENSOR_CHAN_WEIGHT);
-		avg += data->reading;
+		if (hx711_sample_fetch(dev, SENSOR_CHAN_ALL) == 0) {
+			avg += data->reading;
+		}
 	}
-	LOG_DBG("Average before division : %d", avg);
+
+	LOG_DBG("Tare raw sum: %d", avg);
 	avg = avg / readings;
-	LOG_DBG("Average after division : %d", avg);
+	LOG_DBG("Tare average: %d", avg);
+
 	data->offset = avg;
 
 #if defined(CONFIG_HX711_ENABLE_MEDIAN_FILTER) || defined(CONFIG_HX711_ENABLE_EMA_FILTER)
@@ -562,7 +433,7 @@ int avia_hx711_tare(const struct device *dev, uint8_t readings)
 #endif
 
 #ifdef CONFIG_HX711_ENABLE_MEDIAN_FILTER
-    median_filter_init(&data->median_filter, data->offset);
+	median_filter_init(&data->median_filter, data->offset);
 #endif
 
 #ifdef CONFIG_HX711_ENABLE_EMA_FILTER
@@ -576,63 +447,37 @@ int avia_hx711_tare(const struct device *dev, uint8_t readings)
 	return data->offset;
 }
 
-/**
- * @brief Callibrate the HX711.
- *
- * Given a target value of a known weight the slope gets calculated.
- * This is actually unit agnostic.
- * If the target weight is given in grams, lb, Kg or any other weight unit,
- * the slope will be calculated accordingly.
- *
- * @param dev Pointer to the hx711 device structure
- * @param target Target weight in grams.
- *        If target is represented in another unit (lb, oz, Kg) then the
- *        value returned by sensor_channel_get() will represent that unit.
- * @param readings Number of readings to take for calibration.
- *        5~10 readings should be enough, although more are allowed.
- * @retval The slope value
- *
- */
-struct sensor_value avia_hx711_calibrate(const struct device *dev, uint32_t target,
-					 uint8_t readings)
+
+/* Calibrate slope based on known target weight */
+struct sensor_value avia_hx711_calibrate(const struct device *dev,
+                                         uint32_t target,
+                                         uint8_t readings)
 {
-	int32_t avg = 0;
 	struct hx711_data *data = dev->data;
+	int32_t avg = 0;
 
 	if (readings == 0) {
 		readings = 1;
 	}
 
 	for (int i = 0; i < readings; i++) {
-		hx711_sample_fetch(dev, HX711_SENSOR_CHAN_WEIGHT);
+		hx711_sample_fetch(dev, SENSOR_CHAN_ALL);
 		avg += data->reading;
 	}
-	LOG_DBG("Average before division : %d", avg);
-	avg = avg / readings;
 
-	LOG_DBG("Average after division : %d", avg);
+	avg /= readings;
+	LOG_DBG("Average raw value: %d", avg);
+
 	double slope = (double)target / (double)(avg - data->offset);
 	sensor_value_from_double(&data->slope, slope);
 
-	LOG_DBG("Slope set to : %d.%06d", data->slope.val1, data->slope.val2);
-
+	LOG_DBG("Calibrated slope: %d.%06d", data->slope.val1, data->slope.val2);
 	return data->slope;
 }
 
-
-//todo:
-
-/**
- * @brief Set the HX711 power.
- *
- * @param dev Pointer to the hx711 device structure
- * @param power one of HX711_POWER_OFF, HX711_POWER_ON
- * @retval The current power state or ENOTSUP if an invalid value pow is given
- *
- */
+/* Power management function */
 int avia_hx711_power(const struct device *dev, enum hx711_power pow)
 {
-	int ret;
 	struct hx711_data *data = dev->data;
 	const struct hx711_config *cfg = dev->config;
 
@@ -640,62 +485,63 @@ int avia_hx711_power(const struct device *dev, enum hx711_power pow)
 
 	switch (pow) {
 	case HX711_POWER_ON:
-		ret = gpio_pin_set(data->sck_gpio, cfg->sck_pin, 0);  // LOW to power on
-		hx711_sample_fetch(dev, HX711_SENSOR_CHAN_WEIGHT);   // reapply GAIN
-		return ret;
+		gpio_pin_set_dt(&cfg->sck_gpio, 1);
+		hx711_sample_fetch(dev, SENSOR_CHAN_ALL);
+		return 0;
 	case HX711_POWER_OFF:
-		ret = gpio_pin_set(data->sck_gpio, cfg->sck_pin, 1);  // HIGH to power off
-		return ret;
+		gpio_pin_set_dt(&cfg->sck_gpio, 0);
+		return 0;
 	default:
 		return -ENOTSUP;
 	}
 }
-
 
 #ifdef CONFIG_PM_DEVICE
-/**
- * @brief Set the Device Power Management State.
- *
- * @param dev - The device structure.
- * @param action - power management state
- * @retval 0 on success
- * @retval -ENOTSUP if an unsupported action is given
- *
- */
-int hx711_pm_ctrl(const struct device *dev, enum pm_device_action action)
+/* Device power management callback */
+static int hx711_pm_ctrl(const struct device *dev, enum pm_device_action action)
 {
-	int ret = 0;
-
 	switch (action) {
 	case PM_DEVICE_ACTION_RESUME:
-		ret = avia_hx711_power(dev, HX711_POWER_ON);
-		break;
+		return avia_hx711_power(dev, HX711_POWER_ON);
 	case PM_DEVICE_ACTION_TURN_OFF:
-		ret = avia_hx711_power(dev, HX711_POWER_OFF);
-		break;
+		return avia_hx711_power(dev, HX711_POWER_OFF);
 	default:
 		return -ENOTSUP;
 	}
-
-	return ret;
 }
-#endif /* CONFIG_PM_DEVICE */
+#endif
 
+/* Zephyr sensor driver API interface */
 static const struct sensor_driver_api hx711_api = {
 	.sample_fetch = hx711_sample_fetch,
-	.channel_get = hx711_channel_get,
-	.attr_set = hx711_attr_set,
+	.channel_get  = hx711_channel_get,
+	.attr_set     = hx711_attr_set,
 };
 
+#ifdef CONFIG_PM_DEVICE
+#define HX711_PM_DEFINE(inst) \
+	PM_DEVICE_DT_DEFINE(DT_DRV_INST(inst), hx711_pm_ctrl);
+#else
+#define HX711_PM_DEFINE(inst)
+#endif
 
-DEVICE_DT_DEFINE(DT_NODELABEL(hx711_0), hx711_init, NULL,
-	&hx711_data_0, &hx711_config_0,
-	POST_KERNEL, CONFIG_SENSOR_INIT_PRIORITY, &hx711_api);
+/* Instance generation macro */
+#define HX711_DEFINE(inst)                                                 \
+	static struct hx711_data hx711_data_##inst;                        \
+	static const struct hx711_config hx711_config_##inst = {          \
+		.dout_gpio = GPIO_DT_SPEC_INST_GET(inst, dout_gpios),     \
+		.sck_gpio  = GPIO_DT_SPEC_INST_GET(inst, sck_gpios),      \
+		COND_CODE_1(DT_INST_NODE_HAS_PROP(inst, rate_gpios),      \
+			(.rate_gpio = GPIO_DT_SPEC_INST_GET(inst, rate_gpios),), ()) \
+		.gain = DT_INST_PROP_OR(inst, gain, HX711_GAIN_128),      \
+		.mode = DT_INST_PROP_OR(inst, mode, HX711_MODE_AVERAGE),  \
+		.rate = DT_INST_PROP_OR(inst, rate, HX711_RATE_10HZ),     \
+	};                                                                \
+	HX711_PM_DEFINE(inst)                                             \
+	DEVICE_DT_INST_DEFINE(inst,                                       \
+		hx711_init,                                                   \
+		PM_DEVICE_DT_GET(DT_DRV_INST(inst)),                         \
+		&hx711_data_##inst, &hx711_config_##inst,                    \
+		POST_KERNEL, CONFIG_SENSOR_INIT_PRIORITY, &hx711_api);
 
-DEVICE_DT_DEFINE(DT_NODELABEL(hx711_1), hx711_init, NULL,
-	&hx711_data_1, &hx711_config_1,
-	POST_KERNEL, CONFIG_SENSOR_INIT_PRIORITY, &hx711_api);
-
-DEVICE_DT_DEFINE(DT_NODELABEL(hx711_2), hx711_init, NULL,
-	&hx711_data_2, &hx711_config_2,
-	POST_KERNEL, CONFIG_SENSOR_INIT_PRIORITY, &hx711_api);
+DT_INST_FOREACH_STATUS_OKAY(HX711_DEFINE)
