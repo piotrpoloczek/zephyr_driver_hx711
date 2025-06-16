@@ -1,104 +1,101 @@
-#ifndef ZEPHYR_DRIVERS_SENSOR_HX711_H_
-#define ZEPHYR_DRIVERS_SENSOR_HX711_H_
+#pragma once
+//
+//  HX711.h (Zephyr port from Rob Tillaart's HX711 Arduino library)
+//  PURPOSE: HX711 24-bit ADC driver for load cells (Zephyr RTOS, multi-sensor, shared clock)
+//  AUTHOR:  Piotr Poloczek + OpenAI GPT
+//  LICENSE: MIT-style or match original Apache 2.0
+//
 
+#include <zephyr/kernel.h>
 #include <zephyr/device.h>
 #include <zephyr/drivers/gpio.h>
-#include <zephyr/drivers/sensor.h>
-#include <zephyr/kernel.h>
 
-#if defined(CONFIG_HX711_ENABLE_MEDIAN_FILTER)
-#include "median_filter.h"
-#endif
-
-#if defined(CONFIG_HX711_ENABLE_EMA_FILTER)
-#include "ema_filter.h"
-#endif
+#define HX711_ZEPHYR_VERSION "0.1.0"
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-/* Gain options */
-#define HX711_GAIN_128 1
-#define HX711_GAIN_32  2
-#define HX711_GAIN_64  3
-
-/* Rate options */
-#define HX711_RATE_10HZ  0
-#define HX711_RATE_80HZ  1
-
-/* Power states */
-enum hx711_power {
-	HX711_POWER_OFF = 0,
-	HX711_POWER_ON  = 1,
+// === Read modes ===
+enum hx711_mode {
+	HX711_MODE_AVERAGE = 0x00,
+	HX711_MODE_MEDIAN  = 0x01,
+	HX711_MODE_MEDAVG  = 0x02,
+	HX711_MODE_RUNAVG  = 0x03,
+	HX711_MODE_RAW     = 0x04,
 };
 
-/* Mode (user-defined or app-specific) */
-#define HX711_MODE_RAW      0
-#define HX711_MODE_AVERAGE  1
-#define HX711_MODE_HS_RAW   5
+// === Gain ===
+enum hx711_gain {
+	HX711_GAIN_128 = 128,
+	HX711_GAIN_64  = 64,
+	HX711_GAIN_32  = 32,
+};
 
-/* Custom attributes */
-#define HX711_ATTR_OFFSET   (SENSOR_ATTR_PRIV_START + 0)
-#define HX711_ATTR_SCALE    (SENSOR_ATTR_PRIV_START + 1)
-#define HX711_ATTR_GAIN     (SENSOR_ATTR_PRIV_START + 2)
-#define HX711_ATTR_MODE     (SENSOR_ATTR_PRIV_START + 3)
-#define HX711_ATTR_SLOPE    (SENSOR_ATTR_PRIV_START + 4)
-
-/* Custom channel (mass output) */
-#define HX711_SENSOR_CHAN_WEIGHT SENSOR_CHAN_PRIV_START
-
-struct hx711_data {
-	const struct device *dev;
-
-	int32_t reading;
+// === HX711 instance context ===
+struct hx711_t {
+	struct gpio_dt_spec dout;
+	const struct gpio_dt_spec *sck_shared; // Pointer to shared clock pin (all instances use same)
+	struct k_mutex *sck_mutex;             // Global mutex pointer (shared)
+	
+	enum hx711_gain gain;
 	int32_t offset;
 	float scale;
+	uint32_t last_read_time;
+	float unit_price;
+	enum hx711_mode mode;
 
-	struct sensor_value slope;
-	uint8_t gain;
-	uint8_t mode;
-	uint8_t rate;
-	uint8_t power;
-
-	int32_t last_value;
-	uint32_t last_time_read;
-
-	struct gpio_callback dout_gpio_cb;
-	struct k_sem dout_sem;
-
-#if defined(CONFIG_HX711_ENABLE_MEDIAN_FILTER) || defined(CONFIG_HX711_ENABLE_EMA_FILTER)
-	int32_t reading_unfiltered;
-	struct k_mutex filter_lock;
-#endif
-
-#ifdef CONFIG_HX711_ENABLE_MEDIAN_FILTER
-	struct median_filter median_filter;
-#endif
-
-#ifdef CONFIG_HX711_ENABLE_EMA_FILTER
-	struct ema_filter ema_filter;
-#endif
+	bool fast_processor;
 };
 
-struct hx711_config {
-	struct gpio_dt_spec dout_gpio;
-	struct gpio_dt_spec sck_gpio;
-#if DT_INST_NODE_HAS_PROP(0, rate_gpios)
-	struct gpio_dt_spec rate_gpio;
-#endif
-	uint8_t gain;
-	uint8_t mode;
-	uint8_t rate;
-};
+// === Public API ===
+int hx711_init(struct hx711_t *dev,
+	       const struct gpio_dt_spec *dout_spec,
+	       const struct gpio_dt_spec *sck_shared_spec,
+	       struct k_mutex *shared_mutex,
+	       bool fast_processor);
 
-/* API functions */
-int avia_hx711_tare(const struct device *dev, uint8_t readings);
-struct sensor_value avia_hx711_calibrate(const struct device *dev, uint32_t target, uint8_t readings);
-int avia_hx711_power(const struct device *dev, enum hx711_power power);
+bool hx711_is_ready(struct hx711_t *dev);
+void hx711_wait_ready(struct hx711_t *dev, uint32_t delay_ms);
+bool hx711_wait_ready_retry(struct hx711_t *dev, uint8_t retries, uint32_t delay_ms);
+bool hx711_wait_ready_timeout(struct hx711_t *dev, uint32_t timeout_ms, uint32_t delay_ms);
+
+float hx711_read(struct hx711_t *dev);
+float hx711_read_average(struct hx711_t *dev, uint8_t times);
+float hx711_read_median(struct hx711_t *dev, uint8_t times);
+float hx711_read_medavg(struct hx711_t *dev, uint8_t times);
+float hx711_read_runavg(struct hx711_t *dev, uint8_t times, float alpha);
+
+void hx711_set_mode(struct hx711_t *dev, enum hx711_mode mode);
+enum hx711_mode hx711_get_mode(struct hx711_t *dev);
+
+float hx711_get_value(struct hx711_t *dev, uint8_t times);
+float hx711_get_units(struct hx711_t *dev, uint8_t times);
+
+bool hx711_set_gain(struct hx711_t *dev, enum hx711_gain gain, bool force);
+enum hx711_gain hx711_get_gain(struct hx711_t *dev);
+
+void hx711_tare(struct hx711_t *dev, uint8_t times);
+float hx711_get_tare(struct hx711_t *dev);
+bool hx711_tare_set(struct hx711_t *dev);
+
+bool hx711_set_scale(struct hx711_t *dev, float scale);
+float hx711_get_scale(struct hx711_t *dev);
+
+void hx711_set_offset(struct hx711_t *dev, int32_t offset);
+int32_t hx711_get_offset(struct hx711_t *dev);
+
+void hx711_calibrate_scale(struct hx711_t *dev, float weight, uint8_t times);
+
+void hx711_power_down(struct hx711_t *dev);
+void hx711_power_up(struct hx711_t *dev);
+
+uint32_t hx711_last_read(struct hx711_t *dev);
+
+float hx711_get_price(struct hx711_t *dev, uint8_t times);
+void  hx711_set_unit_price(struct hx711_t *dev, float price);
+float hx711_get_unit_price(struct hx711_t *dev);
 
 #ifdef __cplusplus
 }
 #endif
-
-#endif /* ZEPHYR_DRIVERS_SENSOR_HX711_H_ */
