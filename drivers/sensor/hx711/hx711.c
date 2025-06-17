@@ -115,37 +115,50 @@ static int hx711_cycle(struct hx711_data *data)
  */
 static int hx711_sample_fetch(const struct device *dev, enum sensor_channel chan)
 {
-	int ret = 0;
-	int interrupt_cfg_ret;
-	uint32_t count = 0;
-	int i;
-
 	struct hx711_data *data = dev->data;
 	const struct hx711_config *cfg = dev->config;
+	uint32_t count = 0;
+	int i;
 
 	if (data->power != HX711_POWER_ON) {
 		return -EACCES;
 	}
 
-	if (k_sem_take(&data->dout_sem, K_MSEC(CONFIG_HX711_SAMPLE_FETCH_TIMEOUT_MS))) {
+	// Wait for DOUT to go LOW (data ready)
+	int timeout = CONFIG_HX711_SAMPLE_FETCH_TIMEOUT_MS * 1000;
+	while (gpio_pin_get(data->dout_gpio, cfg->dout_pin) != 0 && timeout-- > 0) {
+		k_busy_wait(1);
+	}
+	if (timeout <= 0) {
 		LOG_ERR("Weight data not ready within %d ms", CONFIG_HX711_SAMPLE_FETCH_TIMEOUT_MS);
-		ret = -EIO;
-		goto exit;
+		return -EIO;
 	}
 
-	/* Clock data out. */
+	// Lock SCK access for this read
+	k_mutex_lock(&hx711_sck_mutex, K_FOREVER);
+
 	for (i = 0; i < 24; i++) {
 		count = count << 1;
-		if (hx711_cycle(data)) {
+		gpio_pin_set(data->sck_gpio, cfg->sck_pin, 1);
+		k_busy_wait(1);
+		if (gpio_pin_get(data->dout_gpio, cfg->dout_pin)) {
 			count++;
 		}
+		gpio_pin_set(data->sck_gpio, cfg->sck_pin, 0);
+		k_busy_wait(1);
 	}
 
-	/* set GAIN for next read */
+	// Pulse additional times to set gain
 	for (i = 0; i < data->gain; i++) {
-		hx711_cycle(data);
+		gpio_pin_set(data->sck_gpio, cfg->sck_pin, 1);
+		k_busy_wait(1);
+		gpio_pin_set(data->sck_gpio, cfg->sck_pin, 0);
+		k_busy_wait(1);
 	}
 
+	k_mutex_unlock(&hx711_sck_mutex);
+
+	// Convert from 24-bit signed
 	count ^= 0x800000;
 	data->reading = count;
 
@@ -155,33 +168,18 @@ static int hx711_sample_fetch(const struct device *dev, enum sensor_channel chan
 #endif
 
 #ifdef CONFIG_HX711_ENABLE_MEDIAN_FILTER
-	// Apply the median filter to the reading
-    data->reading = median_filter_update(&data->median_filter, data->reading);
+	data->reading = median_filter_update(&data->median_filter, data->reading);
 #endif
-
 #ifdef CONFIG_HX711_ENABLE_EMA_FILTER
-	// Apply the EMA filter to the reading
-    data->reading = ema_filter_update(&data->ema_filter, data->reading);
+	data->reading = ema_filter_update(&data->ema_filter, data->reading);
 #endif
 
 #if defined(CONFIG_HX711_ENABLE_MEDIAN_FILTER) || defined(CONFIG_HX711_ENABLE_EMA_FILTER)
 	k_mutex_unlock(&data->filter_lock);
 #endif
 
-exit:
-	// Disable DOUT interrupt first to ensure clean reconfiguration
-	gpio_pin_interrupt_configure(data->dout_gpio, cfg->dout_pin, GPIO_INT_DISABLE);
-
-	// Re-enable DOUT interrupt to catch the next falling edge
-	interrupt_cfg_ret = gpio_pin_interrupt_configure(data->dout_gpio, cfg->dout_pin, GPIO_INT_EDGE_TO_INACTIVE);
-	if (interrupt_cfg_ret != 0) {
-		LOG_ERR("Failed to set DOUT GPIO interrupt: %d", interrupt_cfg_ret);
-		ret = interrupt_cfg_ret;
-	}
-
-	return ret;
+	return 0;
 }
-
 
 
 /**
