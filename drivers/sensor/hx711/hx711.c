@@ -145,15 +145,15 @@ static int hx711_sample_fetch(const struct device *dev, enum sensor_channel chan
 			count++;
 		}
 		gpio_pin_set(data->sck_gpio, cfg->sck_pin, 0);
-		k_busy_wait(1);
+		k_busy_wait(10);
 	}
 
 	// Pulse additional times to set gain
 	for (i = 0; i < data->gain; i++) {
 		gpio_pin_set(data->sck_gpio, cfg->sck_pin, 1);
-		k_busy_wait(1);
+		k_busy_wait(10);
 		gpio_pin_set(data->sck_gpio, cfg->sck_pin, 0);
-		k_busy_wait(1);
+		k_busy_wait(10);
 	}
 
 	k_mutex_unlock(&hx711_sck_mutex);
@@ -605,14 +605,14 @@ struct sensor_value avia_hx711_calibrate(const struct device *dev, uint32_t targ
 		hx711_sample_fetch(dev, HX711_SENSOR_CHAN_WEIGHT);
 		avg += data->reading;
 	}
-	LOG_DBG("Average before division : %d", avg);
+	printk("Average before division : %d", avg);
 	avg = avg / readings;
 
-	LOG_DBG("Average after division : %d", avg);
+	printk("Average after division : %d", avg);
 	double slope = (double)target / (double)(avg - data->offset);
 	sensor_value_from_double(&data->slope, slope);
 
-	LOG_DBG("Slope set to : %d.%06d", data->slope.val1, data->slope.val2);
+	printk("Slope set to : %d.%06d", data->slope.val1, data->slope.val2);
 
 	return data->slope;
 }
