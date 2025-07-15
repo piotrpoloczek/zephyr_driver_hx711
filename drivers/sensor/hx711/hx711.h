@@ -16,12 +16,15 @@ extern "C" {
 #include <zephyr/drivers/sensor.h>
 #include <zephyr/drivers/gpio.h>
 
+/* Filter includes */
+#ifdef CONFIG_HX711_ENABLE_EMA_FILTER
+#include "filters/ema.h"
+#endif
 #ifdef CONFIG_HX711_ENABLE_MEDIAN_FILTER
 #include "filters/median.h"
 #endif
-
-#ifdef CONFIG_HX711_ENABLE_EMA_FILTER
-#include "filters/ema.h"
+#ifdef CONFIG_HX711_ENABLE_SPIKE_FILTER
+#include "filters/spike.h"
 #endif
 
 /* Additional custom attributes */
@@ -50,6 +53,12 @@ enum hx711_power {
 	HX711_POWER_OFF,
 };
 
+enum hx711_filter_type {
+	HX711_FILTER_NONE,
+	HX711_FILTER_EMA,
+	HX711_FILTER_MEDIAN,
+};
+
 struct hx711_data {
 	const struct device *dev;
 	const struct device *dout_gpio;
@@ -59,21 +68,24 @@ struct hx711_data {
 	struct k_sem dout_sem;
 
 	int32_t reading;
+	int32_t filtered_reading;
 
 	int offset;
 	struct sensor_value slope;
 	char gain;
 	enum hx711_rate rate;
 	enum hx711_power power;
-#if defined(CONFIG_HX711_ENABLE_MEDIAN_FILTER) || defined(CONFIG_HX711_ENABLE_EMA_FILTER)
-	struct k_mutex filter_lock;
-	int32_t reading_unfiltered;
+
+#ifdef CONFIG_HX711_ENABLE_EMA_FILTER
+	ema_filter_t ema_filter;
 #endif
 #ifdef CONFIG_HX711_ENABLE_MEDIAN_FILTER
 	median_filter_t median_filter;
 #endif
-#ifdef CONFIG_HX711_ENABLE_EMA_FILTER
-	ema_filter_t ema_filter;
+#ifdef CONFIG_HX711_ENABLE_SPIKE_FILTER
+	spike_filter_state_t spike_filter;
+	int32_t last_good_filtered_reading;
+	bool spike_rejected;
 #endif
 };
 

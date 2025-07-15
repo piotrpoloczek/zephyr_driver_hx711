@@ -5,7 +5,7 @@
 
 typedef struct
 {
-    float alpha;
+    double alpha;
     double out;
 } ema_filter_t;
 

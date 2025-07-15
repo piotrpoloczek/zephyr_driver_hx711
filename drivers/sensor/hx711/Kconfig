@@ -48,6 +48,7 @@ endchoice
 
 config HX711_SAMPLING_RATE
 	int "HX711 sampling rate"
+	default 0
 	default 0 if HX711_RATE_10HZ
 	default 1 if HX711_RATE_80HZ
 
@@ -71,42 +72,52 @@ config HX711_DISABLE_INTERRUPTS_WHILE_POLLING
 
 config HX711_GAIN
 	int
+	default 1
 	default 1 if HX711_GAIN_128X
 	default 2 if HX711_GAIN_32X
 	default 3 if HX711_GAIN_64X
 
-config HX711_SAMPLE_FETCH_TIMEOUT_MS
-	int "HX711 sampling timeout"
-	default 1000
+# Filter configuration
+config HX711_ENABLE_EMA_FILTER
+	bool "Enable EMA filter"
+	default n
 	help
-	  Max waiting time (ms) for data ready state.
+	  Enable Exponential Moving Average filter for HX711 sensor readings.
+
+config HX711_EMA_FILTER_ALPHA_FACTOR
+	int "EMA filter alpha factor (0-100)"
+	depends on HX711_ENABLE_EMA_FILTER
+	range 0 100
+	default 50
+	help
+	  EMA filter smoothing factor (0-100). Lower values = more smoothing.
 
 config HX711_ENABLE_MEDIAN_FILTER
-	bool "Apply median filter to output"
-	depends on MINIMAL_LIBC # int types, qsort()
+	bool "Enable Median filter"
+	default n
 	help
-	  Apply median filter to output to discard peak values.
+	  Enable Median filter for HX711 sensor readings.
 
 config HX711_MEDIAN_FILTER_WINDOW_SIZE
 	int "Median filter window size"
 	depends on HX711_ENABLE_MEDIAN_FILTER
+	range 3 15
 	default 3
-	range 2 255
 	help
-	  Median filter window size.
+	  Number of samples to use for median calculation. Must be odd for best results.
 
-config HX711_ENABLE_EMA_FILTER
-	bool "Apply Exponential Moving Average filter to output"
-	depends on MINIMAL_LIBC # int types
+config HX711_ENABLE_SPIKE_FILTER
+	bool "Enable Spike filter"
+	default n
 	help
-	  Apply Exponential Moving Average (EMA) filter to output to smooth output values.
+	  Enable Spike filter to detect and reject sudden weight spikes.
 
-config HX711_EMA_FILTER_ALPHA_FACTOR
-	int "EMA filter alpha factor"
-	depends on HX711_ENABLE_EMA_FILTER
-	default 50
-	range 0 100
+config HX711_SPIKE_FILTER_THRESHOLD
+	int "Spike filter threshold (grams)"
+	depends on HX711_ENABLE_SPIKE_FILTER
+	range 1 1000
+	default 51
 	help
-	  How aggresive the smoothing shall be. Value close to 100 means more aggresive while the value close to 0 means less aggresive smoothing.
+	  Weight threshold in grams above which readings are considered spikes.
 
 endif # HX711
