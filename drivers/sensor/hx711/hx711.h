@@ -1,101 +1,152 @@
-#pragma once
-//
-//  HX711.h (Zephyr port from Rob Tillaart's HX711 Arduino library)
-//  PURPOSE: HX711 24-bit ADC driver for load cells (Zephyr RTOS, multi-sensor, shared clock)
-//  AUTHOR:  Piotr Poloczek + OpenAI GPT
-//  LICENSE: MIT-style or match original Apache 2.0
-//
+/*
+ * Copyright (c) 2020 George Gkinis
+ * Copyright (c) 2022 Jan Gnip
+ * SPDX-License-Identifier: Apache-2.0
+ */
 
-#include <zephyr/kernel.h>
-#include <zephyr/device.h>
-#include <zephyr/drivers/gpio.h>
-
-#define HX711_ZEPHYR_VERSION "0.1.0"
+#ifndef ZEPHYR_DRIVERS_SENSOR_HX711_H_
+#define ZEPHYR_DRIVERS_SENSOR_HX711_H_
 
 #ifdef __cplusplus
 extern "C" {
 #endif
 
-// === Read modes ===
-enum hx711_mode {
-	HX711_MODE_AVERAGE = 0x00,
-	HX711_MODE_MEDIAN  = 0x01,
-	HX711_MODE_MEDAVG  = 0x02,
-	HX711_MODE_RUNAVG  = 0x03,
-	HX711_MODE_RAW     = 0x04,
+#include <zephyr/device.h>
+#include <zephyr/kernel.h>
+#include <zephyr/drivers/sensor.h>
+#include <zephyr/drivers/gpio.h>
+
+/* Filter includes */
+#ifdef CONFIG_HX711_ENABLE_EMA_FILTER
+#include "filters/ema.h"
+#endif
+#ifdef CONFIG_HX711_ENABLE_MEDIAN_FILTER
+#include "filters/median.h"
+#endif
+#ifdef CONFIG_HX711_ENABLE_SPIKE_FILTER
+#include "filters/spike.h"
+#endif
+
+/* Additional custom attributes */
+enum hx711_attribute {
+	HX711_SENSOR_ATTR_SLOPE = SENSOR_ATTR_PRIV_START,
+	HX711_SENSOR_ATTR_GAIN  = SENSOR_ATTR_PRIV_START + 1,
 };
 
-// === Gain ===
+enum hx711_channel {
+	HX711_SENSOR_CHAN_WEIGHT = SENSOR_CHAN_PRIV_START,
+};
+
 enum hx711_gain {
-	HX711_GAIN_128 = 128,
-	HX711_GAIN_64  = 64,
-	HX711_GAIN_32  = 32,
+	HX711_GAIN_128X = 1,
+	HX711_GAIN_32X,
+	HX711_GAIN_64X,
 };
 
-// === HX711 instance context ===
-struct hx711_t {
-	struct gpio_dt_spec dout;
-	const struct gpio_dt_spec *sck_shared; // Pointer to shared clock pin (all instances use same)
-	struct k_mutex *sck_mutex;             // Global mutex pointer (shared)
-	
-	enum hx711_gain gain;
-	int32_t offset;
-	float scale;
-	uint32_t last_read_time;
-	float unit_price;
-	enum hx711_mode mode;
-
-	bool fast_processor;
+enum hx711_rate {
+	HX711_RATE_10HZ,
+	HX711_RATE_80HZ,
 };
 
-// === Public API ===
-int hx711_init(struct hx711_t *dev,
-	       const struct gpio_dt_spec *dout_spec,
-	       const struct gpio_dt_spec *sck_shared_spec,
-	       struct k_mutex *shared_mutex,
-	       bool fast_processor);
+enum hx711_power {
+	HX711_POWER_ON,
+	HX711_POWER_OFF,
+};
 
-bool hx711_is_ready(struct hx711_t *dev);
-void hx711_wait_ready(struct hx711_t *dev, uint32_t delay_ms);
-bool hx711_wait_ready_retry(struct hx711_t *dev, uint8_t retries, uint32_t delay_ms);
-bool hx711_wait_ready_timeout(struct hx711_t *dev, uint32_t timeout_ms, uint32_t delay_ms);
+enum hx711_filter_type {
+	HX711_FILTER_NONE,
+	HX711_FILTER_EMA,
+	HX711_FILTER_MEDIAN,
+};
 
-float hx711_read(struct hx711_t *dev);
-float hx711_read_average(struct hx711_t *dev, uint8_t times);
-float hx711_read_median(struct hx711_t *dev, uint8_t times);
-float hx711_read_medavg(struct hx711_t *dev, uint8_t times);
-float hx711_read_runavg(struct hx711_t *dev, uint8_t times, float alpha);
+struct hx711_data {
+	const struct device *dev;
+	const struct device *dout_gpio;
+	const struct device *sck_gpio;
+	const struct device *rate_gpio;
+	struct gpio_callback dout_gpio_cb;
+	struct k_sem dout_sem;
 
-void hx711_set_mode(struct hx711_t *dev, enum hx711_mode mode);
-enum hx711_mode hx711_get_mode(struct hx711_t *dev);
+	int32_t reading;
+	int32_t filtered_reading;
 
-float hx711_get_value(struct hx711_t *dev, uint8_t times);
-float hx711_get_units(struct hx711_t *dev, uint8_t times);
+	int offset;
+	struct sensor_value slope;
+	char gain;
+	enum hx711_rate rate;
+	enum hx711_power power;
 
-bool hx711_set_gain(struct hx711_t *dev, enum hx711_gain gain, bool force);
-enum hx711_gain hx711_get_gain(struct hx711_t *dev);
+#ifdef CONFIG_HX711_ENABLE_EMA_FILTER
+	ema_filter_t ema_filter;
+#endif
+#ifdef CONFIG_HX711_ENABLE_MEDIAN_FILTER
+	median_filter_t median_filter;
+#endif
+#ifdef CONFIG_HX711_ENABLE_SPIKE_FILTER
+	spike_filter_state_t spike_filter;
+	int32_t last_good_filtered_reading;
+	bool spike_rejected;
+#endif
+};
 
-void hx711_tare(struct hx711_t *dev, uint8_t times);
-float hx711_get_tare(struct hx711_t *dev);
-bool hx711_tare_set(struct hx711_t *dev);
+struct hx711_config {
+	gpio_pin_t dout_pin;
+	const struct device *dout_ctrl;
+	gpio_dt_flags_t dout_flags;
 
-bool hx711_set_scale(struct hx711_t *dev, float scale);
-float hx711_get_scale(struct hx711_t *dev);
+	gpio_pin_t sck_pin;
+	const struct device *sck_ctrl;
+	gpio_dt_flags_t sck_flags;
 
-void hx711_set_offset(struct hx711_t *dev, int32_t offset);
-int32_t hx711_get_offset(struct hx711_t *dev);
+	gpio_pin_t rate_pin;
+	const struct device *rate_ctrl;
+	gpio_dt_flags_t rate_flags;
+};
 
-void hx711_calibrate_scale(struct hx711_t *dev, float weight, uint8_t times);
+/**
+ * @brief Zero the HX711.
+ *
+ * @param dev Pointer to the hx711 device structure
+ * @param readings Number of readings to get average offset.
+ *        5~10 readings should be enough, although more are allowed.
+ * @retval The offset value
+ *
+ */
+int avia_hx711_tare(const struct device *dev, uint8_t readings);
 
-void hx711_power_down(struct hx711_t *dev);
-void hx711_power_up(struct hx711_t *dev);
+/**
+ * @brief Callibrate the HX711.
+ *
+ * Given a target value of a known weight the slope gets calculated.
+ * This is actually unit agnostic.
+ * If the target weight is given in grams, lb, Kg or any other weight unit,
+ * the slope will be calculated accordingly.
+ *
+ * @param dev Pointer to the hx711 device structure
+ * @param target Target weight in grams.
+ *        If target is represented in another unit (lb, oz, Kg) then the
+ *        value returned by sensor_channel_get() will represent that unit.
+ * @param readings Number of readings to take for calibration.
+ *        5~10 readings should be enough, although more are allowed.
+ * @retval The slope value
+ *
+ */
+struct sensor_value avia_hx711_calibrate(const struct device *dev,
+					 uint32_t target,
+					 uint8_t readings);
 
-uint32_t hx711_last_read(struct hx711_t *dev);
-
-float hx711_get_price(struct hx711_t *dev, uint8_t times);
-void  hx711_set_unit_price(struct hx711_t *dev, float price);
-float hx711_get_unit_price(struct hx711_t *dev);
+/**
+ * @brief Set the HX711 power.
+ *
+ * @param dev Pointer to the hx711 device structure
+ * @param power one of HX711_POWER_OFF, HX711_POWER_ON
+ * @retval The current power state or ENOTSUP if an invalid value pow is given
+ *
+ */
+int avia_hx711_power(const struct device *dev, enum hx711_power power);
 
 #ifdef __cplusplus
 }
+#endif
+
 #endif

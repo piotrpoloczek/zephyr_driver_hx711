@@ -1,12 +1,11 @@
 # Out of tree HX711 sensor driver module for Zephyr RTOS
 *HX711 is a precision 24-bit analog-to-digital converter (ADC) designed for weigh scale applications.*
 
-## Supported and tested Zephyr versions
-* 3.3.0 (February 2023)
+## Supported Zephyr versions
 * 3.2.0 (September 2022)
 * 2.7.0 LTS2 Release (October 2021)
 ## Usage
-### Module installation for projects using west modules
+### Module installation
 Add this project to your `west.yml` manifest:
 ```yaml
 - name: HX711
@@ -33,15 +32,6 @@ This will import the driver and allow you to use it in your code.
 
 Additionally make sure that you run `west update` when you've added this entry to your `west.yml`.
 
-### Module installation for projects not using west modules directly
-1) Create directory named `modules` inside project root directory.
-2) Clone this repository into `modules` as `HX711` directory
-3) Edit `CMakeLists.txt` in your project's root directory:
-```CMake
-set(ZEPHYR_EXTRA_MODULES "${CMAKE_SOURCE_DIR}/modules/HX711")
-find_package(Zephyr REQUIRED HINTS $ENV{ZEPHYR_BASE})
-```
-
 ### Driver configuration
 Enable sensor driver subsystem and HX711 driver by adding these entries to your `prj.conf`:
 ```ini
@@ -52,28 +42,24 @@ CONFIG_HX711=y
 Define HX711 in your board `.overlay` like this example:
 ```dts
 /{
-	hx711 {
+	hx711@0 {
 		compatible = "avia,hx711";
 		status = "okay";
-		label = "HX711";
+		label = "HX711_0";
 		dout-gpios = <&gpio0 26 (GPIO_ACTIVE_HIGH | GPIO_PULL_UP) >;
 		sck-gpios = <&gpio0 27 GPIO_ACTIVE_HIGH>;
 		rate-gpios = <&gpio0 2 GPIO_ACTIVE_HIGH>;
 	};
+
+	hx711@1 {
+		compatible = "avia,hx711";
+		status = "okay";
+		label = "HX711_1";
+		dout-gpios = <&gpio0 28 (GPIO_ACTIVE_HIGH | GPIO_PULL_UP) >;
+		sck-gpios = <&gpio0 29 GPIO_ACTIVE_HIGH>;
+		rate-gpios = <&gpio0 30 GPIO_ACTIVE_HIGH>;
+	};
 };
-```
-
-There are also optional output filters that you can enable and configure.
-The first one is a median filter to discard any peak values.
-```ini
-CONFIG_HX711_ENABLE_MEDIAN_FILTER=y
-CONFIG_HX711_MEDIAN_FILTER_WINDOW_SIZE=3
-```
-
-The second one is an exponential moving average (EMA) to smooth out the output.
-```ini
-CONFIG_HX711_ENABLE_EMA_FILTER=y
-CONFIG_HX711_EMA_FILTER_ALPHA_FACTOR=50
 ```
 
 ### Driver usage

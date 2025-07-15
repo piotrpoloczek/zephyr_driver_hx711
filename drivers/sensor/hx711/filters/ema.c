@@ -4,15 +4,15 @@ void ema_filter_init(ema_filter_t *f, int alpha, double initial_value)
 {
     if (alpha < 0)
     {
-        f->alpha = 0.0f;
+        f->alpha = 0.0;
     }
     else if (alpha > 100)
     {
-        f->alpha = 1.0f;
+        f->alpha = 1.0;
     }
     else
     {
-        f->alpha = (float)alpha / 100.0f;
+        f->alpha = (double)alpha / 100.0;
     }
 
     f->out = initial_value;
